@@ -1,0 +1,41 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>Lattice Output</title>
+  <style>
+    html, body { margin: 0; padding: 0; width: 100%; height: 100%; overflow: hidden; background: #000; cursor: none; }
+    #view { display: block; width: 100vw; height: 100vh; }
+    .overlay {
+      position: fixed; left: 24px; top: 24px; padding: 10px 16px;
+      background: rgba(0,0,0,0.75); border: 1px solid rgba(255,255,255,0.35); border-radius: 8px;
+      color: #fff; font: 14px/1.5 Menlo, monospace; opacity: 1; transition: opacity 0.6s;
+      pointer-events: none; z-index: 10;
+    }
+    .overlay.hidden { opacity: 0; }
+    #identify {
+      position: fixed; inset: 0; display: none; align-items: center; justify-content: center;
+      flex-direction: column; background: rgba(0,0,0,0.82); color: #fff; z-index: 20;
+      font-family: Menlo, monospace; pointer-events: none;
+    }
+    #identify .num { font-size: 28vh; font-weight: bold; line-height: 1; }
+    #identify .lbl { font-size: 3vh; opacity: 0.8; margin-top: 2vh; }
+    #outLabel {
+      position: fixed; left: 50%; bottom: 6vh; transform: translateX(-50%);
+      font: bold 7vh Menlo, monospace; color: #fff;
+      -webkit-text-stroke: 2px #000; paint-order: stroke fill;
+      background: rgba(0,0,0,0.45); padding: 1vh 3vh; border-radius: 1.5vh;
+      display: none; z-index: 5; pointer-events: none; white-space: nowrap;
+      max-width: 92vw; overflow: hidden; text-overflow: ellipsis;
+    }
+  </style>
+</head>
+<body>
+  <canvas id="view"></canvas>
+  <div id="info" class="overlay"></div>
+  <div id="outLabel"></div>
+  <div id="identify"><div class="num"></div><div class="lbl"></div></div>
+  <script src="patterns.js"></script>
+  <script src="output.js"></script>
+</body>
+</html>

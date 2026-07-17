@@ -1,0 +1,9 @@
+node_modules/
+dist/
+.DS_Store
+
+# The saved GitHub token (gho_, scopes: gist/read:org/repo) can't push workflow
+# files. Once a token with `workflow` scope is configured, delete the line below
+# and push — CI then builds mac/win/linux on every version tag.
+# Until then, release with: GH_TOKEN=<token> npm run release
+.github/workflows/

@@ -1,0 +1,145 @@
+:root {
+  --bg: #14161a;
+  --panel: #1d2026;
+  --panel2: #23262d;
+  --border: #2e323b;
+  --text: #e6e8ec;
+  --muted: #9aa1ad;
+  --accent: #3fa9f5;
+  --danger: #e5534b;
+  --live: #3fb950;
+}
+
+* { box-sizing: border-box; }
+
+html, body {
+  margin: 0; height: 100%;
+  background: var(--bg); color: var(--text);
+  font: 13px/1.5 -apple-system, "Segoe UI", Helvetica, Arial, sans-serif;
+}
+
+body { display: flex; flex-direction: column; }
+
+header {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 10px 16px; border-bottom: 1px solid var(--border); background: var(--panel);
+  -webkit-app-region: drag;
+}
+header .brand { font-size: 15px; font-weight: 600; }
+header .version { font-size: 11px; color: var(--muted); font-weight: 400; margin-left: 6px; }
+.header-actions { display: flex; gap: 8px; -webkit-app-region: no-drag; }
+
+main {
+  flex: 1; display: flex; gap: 12px; padding: 12px; overflow: auto;
+}
+
+#controls { width: 340px; flex-shrink: 0; display: flex; flex-direction: column; gap: 12px; }
+#right { flex: 1; display: flex; flex-direction: column; gap: 12px; min-width: 0; }
+
+.card {
+  background: var(--panel); border: 1px solid var(--border); border-radius: 10px;
+  padding: 14px;
+}
+.card h2 {
+  margin: 0 0 10px; font-size: 12px; text-transform: uppercase; letter-spacing: 0.08em;
+  color: var(--muted);
+}
+
+label { display: block; color: var(--muted); font-size: 12px; margin-bottom: 8px; }
+input[type="number"], select {
+  display: block; width: 100%; margin-top: 3px; padding: 6px 8px;
+  background: var(--panel2); color: var(--text); border: 1px solid var(--border);
+  border-radius: 6px; font: inherit;
+}
+input[type="color"] {
+  display: block; margin-top: 3px; width: 100%; height: 30px; padding: 2px;
+  background: var(--panel2); border: 1px solid var(--border); border-radius: 6px;
+}
+input[type="range"] { flex: 1; accent-color: var(--accent); }
+.range-wrap { display: flex; align-items: center; gap: 8px; margin-top: 6px; }
+.range-wrap .val { min-width: 42px; text-align: right; color: var(--text); font-variant-numeric: tabular-nums; }
+
+.row2 { display: flex; gap: 10px; }
+.row2 label { flex: 1; }
+
+.check { display: flex; align-items: center; gap: 7px; color: var(--text); }
+.check input { accent-color: var(--accent); }
+.check-inline { display: flex; align-items: center; gap: 4px; color: var(--muted); font-size: 12px; margin: 0; }
+.check-inline input { accent-color: var(--accent); }
+
+.preset-chips { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 10px; }
+.chip {
+  padding: 4px 10px; background: var(--panel2); color: var(--text); font: inherit; font-size: 11px;
+  border: 1px solid var(--border); border-radius: 20px; cursor: pointer;
+}
+.chip:hover { border-color: var(--accent); color: var(--accent); }
+
+input[type="text"] {
+  display: block; width: 100%; margin-top: 3px; padding: 6px 8px;
+  background: var(--panel2); color: var(--text); border: 1px solid var(--border);
+  border-radius: 6px; font: inherit;
+}
+.display-card input.olabel { width: 120px; margin-top: 0; }
+
+.summary { margin-top: 6px; color: var(--accent); font-weight: 600; font-size: 13px; }
+.summary-inline { color: var(--accent); font-weight: 600; text-transform: none; letter-spacing: 0; margin-left: 8px; }
+
+.pattern-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; margin-bottom: 12px; }
+.pattern-grid button {
+  padding: 8px 4px; background: var(--panel2); color: var(--text);
+  border: 1px solid var(--border); border-radius: 7px; cursor: pointer; font: inherit; font-size: 12px;
+}
+.pattern-grid button:hover { border-color: var(--accent); }
+.pattern-grid button.active { background: var(--accent); border-color: var(--accent); color: #0b1220; font-weight: 600; }
+
+.param { display: none; }
+.param.visible { display: block; }
+
+#previewBox {
+  background: #000; border: 1px solid var(--border); border-radius: 6px;
+  display: flex; align-items: center; justify-content: center; padding: 8px; min-height: 180px;
+}
+#preview { max-width: 100%; image-rendering: pixelated; }
+
+.display-card {
+  display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
+  background: var(--panel2); border: 1px solid var(--border); border-radius: 8px;
+  padding: 10px 12px; margin-bottom: 8px;
+}
+.display-card .dnum {
+  width: 30px; height: 30px; border-radius: 6px; background: var(--panel);
+  border: 1px solid var(--border); display: flex; align-items: center; justify-content: center;
+  font-weight: 700; color: var(--accent); flex-shrink: 0;
+}
+.display-card .dinfo { flex: 1; min-width: 160px; }
+.display-card .dname { font-weight: 600; }
+.display-card .dres { color: var(--muted); font-size: 12px; }
+.display-card .dctl { display: flex; align-items: center; gap: 8px; }
+.display-card select, .display-card input[type="number"] { width: auto; margin-top: 0; }
+.display-card input[type="number"] { width: 74px; }
+.display-card label { margin: 0; display: flex; align-items: center; gap: 5px; }
+
+.badge {
+  font-size: 10px; font-weight: 700; letter-spacing: 0.06em; padding: 2px 8px;
+  border-radius: 20px; text-transform: uppercase;
+}
+.badge.live { background: rgba(63,185,80,0.15); color: var(--live); border: 1px solid var(--live); }
+
+.btn {
+  padding: 7px 14px; background: var(--panel2); color: var(--text);
+  border: 1px solid var(--border); border-radius: 7px; cursor: pointer; font: inherit;
+}
+.btn:hover { border-color: var(--accent); }
+.btn.primary { background: var(--accent); border-color: var(--accent); color: #0b1220; font-weight: 600; }
+.btn.danger { border-color: var(--danger); color: var(--danger); }
+.btn.danger:hover { background: rgba(229,83,75,0.12); }
+
+.hint { color: var(--muted); font-size: 12px; margin-top: 6px; }
+
+#updateBar {
+  position: fixed; left: 50%; bottom: 14px; transform: translateX(-50%);
+  display: none; align-items: center; gap: 12px; z-index: 50;
+  background: var(--panel2); border: 1px solid var(--accent); border-radius: 10px;
+  padding: 9px 16px; box-shadow: 0 6px 24px rgba(0,0,0,0.5);
+}
+#updateBar .msg { color: var(--text); }

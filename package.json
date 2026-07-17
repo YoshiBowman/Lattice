@@ -1,0 +1,79 @@
+{
+  "name": "lattice",
+  "productName": "Lattice",
+  "version": "0.3.0",
+  "description": "Lattice — LED wall test pattern generator. Live multi-output test feeds for any show wall configuration.",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron .",
+    "build": "electron-builder",
+    "build:mac": "electron-builder --mac",
+    "build:win": "electron-builder --win",
+    "build:linux": "electron-builder --linux",
+    "release": "electron-builder --mac --x64 --arm64 --publish always"
+  },
+  "author": "Josh <joshbtv@gmail.com>",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/YoshiBowman/Lattice.git"
+  },
+  "build": {
+    "appId": "com.lattice.app",
+    "productName": "Lattice",
+    "directories": {
+      "output": "dist"
+    },
+    "files": [
+      "main.js",
+      "preload.js",
+      "renderer/**/*",
+      "package.json"
+    ],
+    "mac": {
+      "category": "public.app-category.utilities",
+      "target": [
+        "dmg",
+        "zip"
+      ],
+      "hardenedRuntime": true,
+      "gatekeeperAssess": false,
+      "entitlements": "build/entitlements.mac.plist",
+      "entitlementsInherit": "build/entitlements.mac.plist",
+      "icon": "build/icon.icns"
+    },
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
+      ]
+    },
+    "linux": {
+      "target": [
+        "AppImage"
+      ],
+      "category": "Utility"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true
+    },
+    "publish": {
+      "provider": "github",
+      "owner": "YoshiBowman",
+      "repo": "Lattice",
+      "releaseType": "release"
+    }
+  },
+  "devDependencies": {
+    "electron": "^29.4.6",
+    "electron-builder": "^24.9.1"
+  },
+  "dependencies": {
+    "electron-updater": "^6.8.9"
+  }
+}

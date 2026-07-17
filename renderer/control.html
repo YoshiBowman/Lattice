@@ -1,0 +1,107 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>Lattice</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <header>
+    <div class="brand">Lattice <span id="version" class="version"></span></div>
+    <div class="header-actions">
+      <button id="identifyBtn" class="btn">Identify Displays</button>
+      <button id="stopAllBtn" class="btn danger">Stop All Outputs</button>
+    </div>
+  </header>
+
+  <main>
+    <aside id="controls">
+      <section class="card">
+        <h2>Wall Setup</h2>
+        <label>Panel layout
+          <select id="wallMode">
+            <option value="uniform">Uniform panels</option>
+            <option value="manual">Manual grid (mixed sizes)</option>
+          </select>
+        </label>
+        <div id="uniformRows">
+          <div class="preset-chips">
+            <button class="chip" data-pw="500" data-ph="500">500×500</button>
+            <button class="chip" data-pw="500" data-ph="1000">500×1000</button>
+            <button class="chip" data-pw="128" data-ph="128">128×128</button>
+            <button class="chip" data-pw="192" data-ph="192">192×192</button>
+          </div>
+          <div class="row2">
+            <label>Panel width (px)<input type="number" id="panelW" min="1" max="2048" value="128"></label>
+            <label>Panel height (px)<input type="number" id="panelH" min="1" max="2048" value="128"></label>
+          </div>
+          <div class="row2">
+            <label>Panels across<input type="number" id="panelsX" min="1" max="200" value="8"></label>
+            <label>Panels down<input type="number" id="panelsY" min="1" max="200" value="4"></label>
+          </div>
+        </div>
+        <div id="manualRows" style="display:none">
+          <label>Column widths in px, left→right (A, B, C…)
+            <input type="text" id="colWidths" placeholder="500, 500, 250" spellcheck="false"></label>
+          <label>Row heights in px, top→bottom (1, 2, 3…)
+            <input type="text" id="rowHeights" placeholder="500, 1000" spellcheck="false"></label>
+        </div>
+        <label class="check"><input type="checkbox" id="customRes"> Custom total resolution</label>
+        <div class="row2" id="customResRow" style="display:none">
+          <label>Wall width (px)<input type="number" id="wallW" min="1" max="16384" value="1024"></label>
+          <label>Wall height (px)<input type="number" id="wallH" min="1" max="16384" value="512"></label>
+        </div>
+        <div id="wallSummary" class="summary"></div>
+      </section>
+
+      <section class="card">
+        <h2>Pattern</h2>
+        <div id="patternButtons" class="pattern-grid"></div>
+        <div class="param-rows">
+          <label class="param" data-param="fg">Foreground<input type="color" id="fg" value="#ffffff"></label>
+          <label class="param" data-param="bg">Background<input type="color" id="bg" value="#000000"></label>
+          <label class="param" data-param="size">Size / spacing
+            <span class="range-wrap"><input type="range" id="size" min="1" max="256" value="16"><span id="sizeVal" class="val"></span></span>
+          </label>
+          <label class="param" data-param="speed">Speed
+            <span class="range-wrap"><input type="range" id="speed" min="0.25" max="10" step="0.25" value="2"><span id="speedVal" class="val"></span></span>
+          </label>
+          <label class="param" data-param="dir">Direction
+            <select id="dir">
+              <option value="h">Horizontal →</option>
+              <option value="v">Vertical ↓</option>
+              <option value="d">Diagonal ↘</option>
+            </select>
+          </label>
+          <label class="param" data-param="gradMode">Gradient
+            <select id="gradMode">
+              <option value="gray-h">Gray, horizontal</option>
+              <option value="gray-v">Gray, vertical</option>
+              <option value="red">Black to Red</option>
+              <option value="green">Black to Green</option>
+              <option value="blue">Black to Blue</option>
+              <option value="hue">Hue sweep</option>
+            </select>
+          </label>
+        </div>
+      </section>
+    </aside>
+
+    <section id="right">
+      <section class="card">
+        <h2>Preview <span id="previewRes" class="summary-inline"></span></h2>
+        <div id="previewBox"><canvas id="preview"></canvas></div>
+      </section>
+
+      <section class="card">
+        <h2>Outputs</h2>
+        <div id="displayList"></div>
+        <div class="hint">Any connected display appears here — graphics card outputs, or a playback card whose driver presents it as a display. Press ESC on an output to close it.</div>
+      </section>
+    </section>
+  </main>
+
+  <script src="patterns.js"></script>
+  <script src="control.js"></script>
+</body>
+</html>
