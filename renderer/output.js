@@ -71,8 +71,7 @@ function blit() {
 }
 
 function renderFrame(t) {
-  const pat = window.LED_PATTERNS[cfg.pattern.type] || window.LED_PATTERNS.grid;
-  pat.draw(wctx, cfg, t);
+  window.LED_RENDER_FRAME(wctx, cfg, t);
   blit();
 }
 
@@ -81,8 +80,7 @@ function apply() {
   ensureWall();
   updateLabelOverlay();
   if (rafId !== null) { cancelAnimationFrame(rafId); rafId = null; }
-  const pat = window.LED_PATTERNS[cfg.pattern.type] || window.LED_PATTERNS.grid;
-  if (pat.animated) {
+  if (window.LED_FRAME_ANIMATED(cfg)) {
     const loop = (t) => { renderFrame(t); rafId = requestAnimationFrame(loop); };
     rafId = requestAnimationFrame(loop);
   } else {

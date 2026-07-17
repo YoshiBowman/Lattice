@@ -7,11 +7,14 @@ const LEGACY_STORAGE_KEY = 'ledwall-config-v1'; // pre-rename builds
 const DEFAULTS = {
   wall: {
     mode: 'uniform', // 'uniform' | 'manual'
-    panelW: 128, panelH: 128, panelsX: 8, panelsY: 4,
+    defineBy: 'mm',  // 'mm' (physical size + pitch) | 'px'
+    mmW: 500, mmH: 500, pitch: 2.9,
+    panelW: 172, panelH: 172, panelsX: 8, panelsY: 4,
     colWidths: [500, 500], rowHeights: [500, 500],
     custom: false, width: 1024, height: 512,
   },
   pattern: { type: 'grid', fg: '#ffffff', bg: '#000000', size: 16, speed: 2, gradMode: 'gray-h', dir: 'h' },
+  overlay: { type: 'none', color: '#3fb950', opacity: 70, speed: 1, dir: 'h' },
   outputs: {}, // displayId -> { mode, offsetX, offsetY, label, showLabel }
 };
 
@@ -32,6 +35,7 @@ function loadConfig() {
       return {
         wall: { ...DEFAULTS.wall, ...saved.wall },
         pattern: { ...DEFAULTS.pattern, ...saved.pattern },
+        overlay: { ...DEFAULTS.overlay, ...saved.overlay },
         outputs: saved.outputs || {},
       };
     }
@@ -41,6 +45,12 @@ function loadConfig() {
 
 function resolveWall() {
   const w = cfg.wall;
+  if (w.mode !== 'manual' && w.defineBy === 'mm') {
+    // physical cabinet size + pixel pitch -> pixels per panel
+    const pitch = Math.max(0.1, parseFloat(w.pitch) || 2.9);
+    w.panelW = Math.max(1, Math.round(w.mmW / pitch));
+    w.panelH = Math.max(1, Math.round(w.mmH / pitch));
+  }
   if (!w.custom) {
     const g = window.LED_WALL_GRID(w);
     w.width = Math.max(1, g.width);
@@ -64,11 +74,18 @@ function push() {
 }
 
 function updateSummary() {
-  const g = window.LED_WALL_GRID(cfg.wall);
+  const w = cfg.wall;
+  const g = window.LED_WALL_GRID(w);
   const lastCol = window.LED_COL_LETTER(g.cols - 1);
-  $('#wallSummary').textContent =
-    `Wall canvas: ${cfg.wall.width} × ${cfg.wall.height} px — panels A1…${lastCol}${g.rows} (${g.cols} × ${g.rows})`;
-  $('#previewRes').textContent = `${cfg.wall.width} × ${cfg.wall.height}`;
+  let text = `Wall canvas: ${w.width} × ${w.height} px — panels A1…${lastCol}${g.rows} (${g.cols} × ${g.rows})`;
+  if (w.mode !== 'manual' && w.defineBy === 'mm') {
+    const mW = (w.panelsX * w.mmW) / 1000;
+    const mH = (w.panelsY * w.mmH) / 1000;
+    text += ` — ${mW.toFixed(2)} × ${mH.toFixed(2)} m`;
+    $('#pxPerPanel').textContent = `${w.panelW} × ${w.panelH} px`;
+  }
+  $('#wallSummary').textContent = text;
+  $('#previewRes').textContent = `${w.width} × ${w.height}`;
 }
 
 // ---------- pattern buttons & params ----------
@@ -101,14 +118,43 @@ function syncPatternUI() {
   $('#speedVal').textContent = `${cfg.pattern.speed}×`;
 }
 
+// ---------- overlay pulse buttons & params ----------
+
+function buildOverlayButtons() {
+  const box = $('#overlayButtons');
+  box.innerHTML = '';
+  for (const [id, o] of Object.entries(window.LED_OVERLAYS)) {
+    const btn = document.createElement('button');
+    btn.textContent = o.name;
+    btn.dataset.overlay = id;
+    btn.addEventListener('click', () => {
+      cfg.overlay.type = id;
+      syncOverlayUI();
+      push();
+    });
+    box.appendChild(btn);
+  }
+}
+
+function syncOverlayUI() {
+  const o = window.LED_OVERLAYS[cfg.overlay.type] || window.LED_OVERLAYS.none;
+  document.querySelectorAll('#overlayButtons button').forEach((b) => {
+    b.classList.toggle('active', b.dataset.overlay === cfg.overlay.type);
+  });
+  document.querySelectorAll('.oparam').forEach((el) => {
+    el.classList.toggle('visible', o.params.includes(el.dataset.param));
+  });
+  $('#ovOpacityVal').textContent = `${cfg.overlay.opacity}%`;
+  $('#ovSpeedVal').textContent = `${cfg.overlay.speed}×`;
+}
+
 // ---------- preview ----------
 
 function drawPreviewFrame(t) {
   resolveWall();
   if (previewWall.width !== cfg.wall.width) previewWall.width = cfg.wall.width;
   if (previewWall.height !== cfg.wall.height) previewWall.height = cfg.wall.height;
-  const pat = window.LED_PATTERNS[cfg.pattern.type] || window.LED_PATTERNS.grid;
-  pat.draw(previewWallCtx, cfg, t);
+  window.LED_RENDER_FRAME(previewWallCtx, cfg, t);
 
   const boxW = Math.max(100, $('#previewBox').clientWidth - 16);
   const boxH = 300;
@@ -121,8 +167,7 @@ function drawPreviewFrame(t) {
 
 function startPreview() {
   if (previewRaf !== null) { cancelAnimationFrame(previewRaf); previewRaf = null; }
-  const pat = window.LED_PATTERNS[cfg.pattern.type] || window.LED_PATTERNS.grid;
-  if (pat.animated) {
+  if (window.LED_FRAME_ANIMATED(cfg)) {
     const loop = (t) => { drawPreviewFrame(t); previewRaf = requestAnimationFrame(loop); };
     previewRaf = requestAnimationFrame(loop);
   } else {
@@ -239,6 +284,8 @@ function bindNumber(id, obj, key, after) {
 function syncWallModeUI() {
   $('#uniformRows').style.display = cfg.wall.mode === 'manual' ? 'none' : '';
   $('#manualRows').style.display = cfg.wall.mode === 'manual' ? '' : 'none';
+  $('#mmRows').style.display = cfg.wall.defineBy === 'mm' ? '' : 'none';
+  $('#pxRows').style.display = cfg.wall.defineBy === 'px' ? '' : 'none';
 }
 
 function wireInputs() {
@@ -256,14 +303,44 @@ function wireInputs() {
     syncWallModeUI();
     push();
   });
+
+  const defineBy = $('#defineBy');
+  defineBy.value = cfg.wall.defineBy;
+  defineBy.addEventListener('change', () => {
+    cfg.wall.defineBy = defineBy.value;
+    syncWallModeUI();
+    push();
+  });
+
+  bindNumber('#mmW', cfg.wall, 'mmW');
+  bindNumber('#mmH', cfg.wall, 'mmH');
+
+  const pitch = $('#pitch');
+  pitch.value = cfg.wall.pitch;
+  pitch.addEventListener('change', () => {
+    cfg.wall.pitch = Math.min(50, Math.max(0.4, parseFloat(pitch.value) || 2.9));
+    pitch.value = cfg.wall.pitch;
+    push();
+  });
+
   syncWallModeUI();
 
   document.querySelectorAll('.preset-chips .chip').forEach((chip) => {
     chip.addEventListener('click', () => {
-      cfg.wall.panelW = chip.dataset.pw | 0;
-      cfg.wall.panelH = chip.dataset.ph | 0;
-      $('#panelW').value = cfg.wall.panelW;
-      $('#panelH').value = cfg.wall.panelH;
+      if (chip.dataset.pitch) {
+        cfg.wall.pitch = parseFloat(chip.dataset.pitch);
+        $('#pitch').value = cfg.wall.pitch;
+      } else if (chip.dataset.mmw) {
+        cfg.wall.mmW = chip.dataset.mmw | 0;
+        cfg.wall.mmH = chip.dataset.mmh | 0;
+        $('#mmW').value = cfg.wall.mmW;
+        $('#mmH').value = cfg.wall.mmH;
+      } else {
+        cfg.wall.panelW = chip.dataset.pw | 0;
+        cfg.wall.panelH = chip.dataset.ph | 0;
+        $('#panelW').value = cfg.wall.panelW;
+        $('#panelH').value = cfg.wall.panelH;
+      }
       push();
     });
   });
@@ -317,6 +394,31 @@ function wireInputs() {
   dir.value = cfg.pattern.dir || 'h';
   dir.addEventListener('change', () => { cfg.pattern.dir = dir.value; push(); });
 
+  // overlay pulse params
+  const ovColor = $('#ovColor');
+  ovColor.value = cfg.overlay.color;
+  ovColor.addEventListener('input', () => { cfg.overlay.color = ovColor.value; push(); });
+
+  const ovOpacity = $('#ovOpacity');
+  ovOpacity.value = cfg.overlay.opacity;
+  ovOpacity.addEventListener('input', () => {
+    cfg.overlay.opacity = ovOpacity.value | 0;
+    $('#ovOpacityVal').textContent = `${cfg.overlay.opacity}%`;
+    push();
+  });
+
+  const ovSpeed = $('#ovSpeed');
+  ovSpeed.value = cfg.overlay.speed;
+  ovSpeed.addEventListener('input', () => {
+    cfg.overlay.speed = parseFloat(ovSpeed.value);
+    $('#ovSpeedVal').textContent = `${cfg.overlay.speed}×`;
+    push();
+  });
+
+  const ovDir = $('#ovDir');
+  ovDir.value = cfg.overlay.dir;
+  ovDir.addEventListener('change', () => { cfg.overlay.dir = ovDir.value; push(); });
+
   $('#identifyBtn').addEventListener('click', () => window.ledwall.identify());
   $('#stopAllBtn').addEventListener('click', () => window.ledwall.stopAll());
 }
@@ -360,9 +462,11 @@ function wireUpdates() {
 async function init() {
   $('#version').textContent = 'v' + (await window.ledwall.getVersion());
   buildPatternButtons();
+  buildOverlayButtons();
   wireInputs();
   wireUpdates();
   syncPatternUI();
+  syncOverlayUI();
 
   displays = await window.ledwall.getDisplays();
   renderDisplays();

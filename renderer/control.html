@@ -25,15 +25,47 @@
           </select>
         </label>
         <div id="uniformRows">
-          <div class="preset-chips">
-            <button class="chip" data-pw="500" data-ph="500">500×500</button>
-            <button class="chip" data-pw="500" data-ph="1000">500×1000</button>
-            <button class="chip" data-pw="128" data-ph="128">128×128</button>
-            <button class="chip" data-pw="192" data-ph="192">192×192</button>
+          <label>Define panel by
+            <select id="defineBy">
+              <option value="mm">Physical size + pixel pitch</option>
+              <option value="px">Pixels directly</option>
+            </select>
+          </label>
+          <div id="mmRows">
+            <div class="preset-chips">
+              <button class="chip" data-mmw="500" data-mmh="500">500×500 mm</button>
+              <button class="chip" data-mmw="500" data-mmh="1000">500×1000 mm</button>
+            </div>
+            <div class="row2">
+              <label>Panel width (mm)<input type="number" id="mmW" min="10" max="5000" value="500"></label>
+              <label>Panel height (mm)<input type="number" id="mmH" min="10" max="5000" value="500"></label>
+            </div>
+            <div class="row2">
+              <label>Pixel pitch (mm)<input type="number" id="pitch" min="0.4" max="50" step="0.01" value="2.9"></label>
+              <label>Pixels per panel<div id="pxPerPanel" class="computed"></div></label>
+            </div>
+            <div class="preset-chips" id="pitchChips">
+              <button class="chip" data-pitch="1.9">P1.9</button>
+              <button class="chip" data-pitch="2.6">P2.6</button>
+              <button class="chip" data-pitch="2.9">P2.9</button>
+              <button class="chip" data-pitch="3.9">P3.9</button>
+              <button class="chip" data-pitch="5.2">P5.2</button>
+            </div>
+            <div class="hint">px = round(mm ÷ pitch). Spec-sheet pitch is often nominal — e.g. many
+              “P2.9” 500&nbsp;mm panels are really 168×168 (true pitch 2.976). If you know the panel’s
+              real resolution, fine-tune the pitch until the pixels match.</div>
           </div>
-          <div class="row2">
-            <label>Panel width (px)<input type="number" id="panelW" min="1" max="2048" value="128"></label>
-            <label>Panel height (px)<input type="number" id="panelH" min="1" max="2048" value="128"></label>
+          <div id="pxRows" style="display:none">
+            <div class="preset-chips">
+              <button class="chip" data-pw="128" data-ph="128">128×128</button>
+              <button class="chip" data-pw="168" data-ph="168">168×168</button>
+              <button class="chip" data-pw="176" data-ph="176">176×176</button>
+              <button class="chip" data-pw="192" data-ph="192">192×192</button>
+            </div>
+            <div class="row2">
+              <label>Panel width (px)<input type="number" id="panelW" min="1" max="2048" value="128"></label>
+              <label>Panel height (px)<input type="number" id="panelH" min="1" max="2048" value="128"></label>
+            </div>
           </div>
           <div class="row2">
             <label>Panels across<input type="number" id="panelsX" min="1" max="200" value="8"></label>
@@ -84,6 +116,29 @@
             </select>
           </label>
         </div>
+      </section>
+
+      <section class="card">
+        <h2>Overlay Pulse</h2>
+        <div id="overlayButtons" class="pattern-grid"></div>
+        <div class="param-rows">
+          <label class="oparam" data-param="ovColor">Color<input type="color" id="ovColor" value="#3fb950"></label>
+          <label class="oparam" data-param="ovOpacity">Opacity
+            <span class="range-wrap"><input type="range" id="ovOpacity" min="5" max="100" value="70"><span id="ovOpacityVal" class="val"></span></span>
+          </label>
+          <label class="oparam" data-param="ovSpeed">Speed
+            <span class="range-wrap"><input type="range" id="ovSpeed" min="0.25" max="10" step="0.25" value="1"><span id="ovSpeedVal" class="val"></span></span>
+          </label>
+          <label class="oparam" data-param="ovDir">Direction
+            <select id="ovDir">
+              <option value="h">Horizontal →</option>
+              <option value="v">Vertical ↓</option>
+              <option value="d">Diagonal ↘</option>
+            </select>
+          </label>
+        </div>
+        <div class="hint">Sweeps over the active pattern — watch it cross panel seams to catch
+          mapping errors.</div>
       </section>
     </aside>
 

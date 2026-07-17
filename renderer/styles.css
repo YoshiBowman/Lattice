@@ -92,8 +92,14 @@ input[type="text"] {
 .pattern-grid button:hover { border-color: var(--accent); }
 .pattern-grid button.active { background: var(--accent); border-color: var(--accent); color: #0b1220; font-weight: 600; }
 
-.param { display: none; }
-.param.visible { display: block; }
+.param, .oparam { display: none; }
+.param.visible, .oparam.visible { display: block; }
+
+.computed {
+  margin-top: 3px; padding: 6px 8px;
+  background: var(--panel2); border: 1px solid var(--border); border-radius: 6px;
+  color: var(--accent); font-weight: 600;
+}
 
 #previewBox {
   background: #000; border: 1px solid var(--border); border-radius: 6px;

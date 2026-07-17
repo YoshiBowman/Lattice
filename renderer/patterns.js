@@ -426,8 +426,104 @@
     },
   };
 
+  // ---------------------------------------------------------------------------
+  // Overlay pulses — animated layers composited OVER the current pattern
+  // (Resolume-style: the sweep travels across the test pattern). They draw only
+  // their moving elements, never a background. Opacity is applied by the caller.
+  const OVERLAYS = {
+    none: { name: 'None', params: [] },
+
+    radar: {
+      name: 'Radar Sweep',
+      params: ['ovColor', 'ovOpacity', 'ovSpeed'],
+      draw(ctx, cfg, t) {
+        const { width: w, height: h } = cfg.wall;
+        const o = cfg.overlay;
+        const cx = w / 2, cy = h / 2;
+        const R = Math.hypot(w, h) / 2;
+        const ang = (t / 4000) * (o.speed || 1) * Math.PI * 2;
+        const grad = ctx.createConicGradient(ang, cx, cy);
+        grad.addColorStop(0, 'rgba(0,0,0,0)');
+        grad.addColorStop(0.72, 'rgba(0,0,0,0)');
+        grad.addColorStop(1, hexToRgba(o.color, 0.9));
+        ctx.fillStyle = grad;
+        ctx.beginPath(); ctx.moveTo(cx, cy); ctx.arc(cx, cy, R, 0, Math.PI * 2); ctx.fill();
+        ctx.strokeStyle = o.color;
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.moveTo(cx, cy);
+        ctx.lineTo(cx + Math.cos(ang) * R, cy + Math.sin(ang) * R);
+        ctx.stroke();
+      },
+    },
+
+    ringpulse: {
+      name: 'Ring Pulse',
+      params: ['ovColor', 'ovOpacity', 'ovSpeed'],
+      draw(ctx, cfg, t) {
+        const { width: w, height: h } = cfg.wall;
+        const o = cfg.overlay;
+        const cx = w / 2, cy = h / 2;
+        const R = Math.hypot(w, h) / 2;
+        const rings = 3;
+        for (let i = 0; i < rings; i++) {
+          const frac = (((t / 2000) * (o.speed || 1)) + i / rings) % 1;
+          ctx.strokeStyle = hexToRgba(o.color, 1 - frac);
+          ctx.lineWidth = Math.max(2, Math.min(w, h) / 60);
+          ctx.beginPath(); ctx.arc(cx, cy, Math.max(1, frac * R), 0, Math.PI * 2); ctx.stroke();
+        }
+      },
+    },
+
+    wavesweep: {
+      name: 'Wave Sweep',
+      params: ['ovColor', 'ovOpacity', 'ovSpeed', 'ovDir'],
+      draw(ctx, cfg, t) {
+        const { width: w, height: h } = cfg.wall;
+        const o = cfg.overlay;
+        const dir = o.dir || 'h';
+        const span = dir === 'h' ? w : dir === 'v' ? h : Math.hypot(w, h);
+        const trail = Math.max(40, span * 0.25);
+        const pos = ((t / 1000) * 250 * (o.speed || 1)) % (span + trail);
+        ctx.save();
+        if (dir === 'v') { ctx.translate(w, 0); ctx.rotate(Math.PI / 2); }
+        else if (dir === 'd') { ctx.rotate(Math.PI / 4); }
+        const g = ctx.createLinearGradient(pos - trail, 0, pos, 0);
+        g.addColorStop(0, 'rgba(0,0,0,0)');
+        g.addColorStop(1, hexToRgba(o.color, 0.9));
+        ctx.fillStyle = g;
+        ctx.fillRect(pos - trail, -span, trail, span * 3);
+        ctx.fillStyle = o.color;
+        ctx.fillRect(pos, -span, 3, span * 3);
+        ctx.restore();
+      },
+    },
+  };
+
+  // Single entry point: base pattern, then overlay pulse composited on top.
+  function renderFrame(ctx, cfg, t) {
+    const pat = PATTERNS[cfg.pattern.type] || PATTERNS.grid;
+    pat.draw(ctx, cfg, t);
+    const ovCfg = cfg.overlay;
+    const ov = ovCfg && OVERLAYS[ovCfg.type];
+    if (ov && ov.draw) {
+      ctx.save();
+      ctx.globalAlpha = (ovCfg.opacity == null ? 70 : ovCfg.opacity) / 100;
+      ov.draw(ctx, cfg, t);
+      ctx.restore();
+    }
+  }
+
+  function frameAnimated(cfg) {
+    if (PATTERNS[cfg.pattern.type] && PATTERNS[cfg.pattern.type].animated) return true;
+    return !!(cfg.overlay && cfg.overlay.type && cfg.overlay.type !== 'none');
+  }
+
   window.LED_PATTERNS = PATTERNS;
   window.LED_PATTERN_IS_ANIMATED = (type) => !!(PATTERNS[type] && PATTERNS[type].animated);
+  window.LED_OVERLAYS = OVERLAYS;
+  window.LED_RENDER_FRAME = renderFrame;
+  window.LED_FRAME_ANIMATED = frameAnimated;
   window.LED_WALL_GRID = wallGrid;
   window.LED_COL_LETTER = colLetter;
 })();

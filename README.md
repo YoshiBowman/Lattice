@@ -44,12 +44,16 @@ git tag v<version> && git push origin main --tags
 
 ## What it does
 
-- **Wall setup** — define the wall by panel pixel dimensions and panel count (e.g. 128×128
-  panels, 8 across × 4 down = 1024×512), with 500×500 / 500×1000 / 128×128 / 192×192 quick
-  presets, or switch to **Manual grid** and enter per-column widths and per-row heights for
-  mixed cabinet sizes (e.g. columns `500, 500, 250`, rows `500, 1000`). Panels are addressed
+- **Wall setup** — define panels the way spec sheets do: **physical size (mm) + pixel
+  pitch** (e.g. 500×500 mm @ 2.9 → 172×172 px per panel, with 500×500 / 500×1000 mm and
+  P1.9–P5.2 quick presets), or enter pixels directly. Set panel count and the wall canvas
+  plus physical dimensions in meters are computed. Or switch to **Manual grid** and enter
+  per-column widths and per-row heights for mixed cabinet sizes. Panels are addressed
   spreadsheet-style: letters across (A, B, C…), numbers down (1, 2, 3…) — A1, B1, C2.
   A custom total resolution override is also available.
+- **Overlay pulses** — Resolume-style: a Radar Sweep, Ring Pulse, or Wave Sweep animates
+  **over** the active test pattern (adjustable color, opacity, speed, direction), so you
+  can watch a pulse travel across panel seams while the mapping pattern stays up.
 - **Patterns** — Solid Color, Color Bars, Grid, Checkerboard, Panel Map (A1…Z9 coordinates
   and per-panel pixel size on seam borders), **Panel Chase** (lights each panel in order
   with its coordinate — mapping verification), **Radar Sweep**, **Ring Pulse**, **Wave
