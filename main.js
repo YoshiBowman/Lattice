@@ -1,6 +1,9 @@
 'use strict';
 const { app, BrowserWindow, ipcMain, screen } = require('electron');
 const path = require('path');
+const fs = require('fs');
+const os = require('os');
+const { spawn, spawnSync, execFileSync } = require('child_process');
 const { autoUpdater } = require('electron-updater');
 
 const PRELOAD = path.join(__dirname, 'preload.js');
@@ -120,11 +123,62 @@ function identifyAll() {
 // installs on quit. Same setup verified end-to-end in RDM Explorer.
 
 let updateDownloaded = false;
+let macNeedsManualSwap = false; // unsigned/ad-hoc macOS builds: Squirrel.Mac can't swap them
+
+function appBundlePath() {
+  // /Applications/Lattice.app/Contents/MacOS/Lattice -> /Applications/Lattice.app
+  return path.resolve(app.getPath('exe'), '..', '..', '..');
+}
+
+// Squirrel.Mac only installs updates into properly signed apps (Developer ID).
+// Ad-hoc/linker-signed builds (unsigned electron-builder output) need the
+// manual bundle-swap fallback below.
+function macProperlySigned() {
+  try {
+    const out = spawnSync('codesign', ['-dvv', appBundlePath()], { encoding: 'utf8' });
+    return /Authority=/.test((out.stderr || '') + (out.stdout || ''));
+  } catch (_) {
+    return false;
+  }
+}
+
+// Fallback installer for unsigned macOS builds: take the zip electron-updater
+// already downloaded, unpack to staging, swap the bundle, relaunch.
+function installUnsignedMacUpdate() {
+  const pendingDir = path.join(os.homedir(), 'Library', 'Caches', 'lattice-updater', 'pending');
+  const zips = fs.readdirSync(pendingDir)
+    .filter((f) => f.endsWith('.zip'))
+    .map((f) => path.join(pendingDir, f))
+    .sort((a, b) => fs.statSync(b).mtimeMs - fs.statSync(a).mtimeMs);
+  if (!zips.length) return { ok: false, error: 'No downloaded update zip found' };
+
+  const staging = fs.mkdtempSync(path.join(os.tmpdir(), 'lattice-update-'));
+  execFileSync('ditto', ['-x', '-k', zips[0], staging]);
+  const newApp = fs.readdirSync(staging).map((f) => path.join(staging, f)).find((f) => f.endsWith('.app'));
+  if (!newApp || !fs.existsSync(path.join(newApp, 'Contents', 'MacOS'))) {
+    return { ok: false, error: 'Update zip did not contain a valid app bundle' };
+  }
+
+  const bundle = appBundlePath();
+  const backup = bundle + '.old';
+  fs.rmSync(backup, { recursive: true, force: true });
+  execFileSync('/bin/mv', [bundle, backup]);   // running app keeps working from the renamed bundle
+  execFileSync('/bin/mv', [newApp, bundle]);
+
+  spawn('open', ['-n', bundle], { detached: true, stdio: 'ignore' }).unref();
+  setTimeout(() => app.quit(), 400);
+  return { ok: true };
+}
 
 function setupAutoUpdater() {
   if (!app.isPackaged) return; // dev runs from source — nothing to update
+  if (process.platform === 'darwin') {
+    macNeedsManualSwap = !macProperlySigned();
+    // clean up the previous bundle left behind by a manual swap
+    fs.rm(appBundlePath() + '.old', { recursive: true, force: true }, () => {});
+  }
   autoUpdater.autoDownload = true;
-  autoUpdater.autoInstallOnAppQuit = true;
+  autoUpdater.autoInstallOnAppQuit = !macNeedsManualSwap; // Squirrel would fail silently
   autoUpdater.on('update-available', (info) => {
     notifyControl('update-available', { version: info.version });
   });
@@ -133,7 +187,7 @@ function setupAutoUpdater() {
   });
   autoUpdater.on('update-downloaded', (info) => {
     updateDownloaded = true;
-    notifyControl('update-downloaded', { version: info.version });
+    notifyControl('update-downloaded', { version: info.version, manualOnly: macNeedsManualSwap });
   });
   autoUpdater.on('error', (err) => {
     // Non-fatal: a failed check must never interrupt a show.
@@ -145,11 +199,17 @@ function setupAutoUpdater() {
 }
 
 ipcMain.handle('install-update', () => {
-  if (updateDownloaded) {
-    setImmediate(() => autoUpdater.quitAndInstall());
-    return { ok: true };
+  if (!updateDownloaded) return { ok: false, error: 'No update downloaded yet' };
+  if (macNeedsManualSwap) {
+    try {
+      return installUnsignedMacUpdate();
+    } catch (err) {
+      console.error('[updater] manual swap failed:', err.message);
+      return { ok: false, error: err.message };
+    }
   }
-  return { ok: false, error: 'No update downloaded yet' };
+  setImmediate(() => autoUpdater.quitAndInstall());
+  return { ok: true };
 });
 
 // ---------- IPC ----------

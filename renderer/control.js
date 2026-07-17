@@ -351,7 +351,8 @@ function showUpdate(msg, withRestart) {
 function wireUpdates() {
   window.ledwall.onUpdateAvailable(({ version }) => showUpdate(`Update v${version} available — downloading…`, false));
   window.ledwall.onUpdateProgress(({ percent }) => showUpdate(`Downloading update… ${percent}%`, false));
-  window.ledwall.onUpdateDownloaded(({ version }) => showUpdate(`v${version} downloaded — installs on quit, or`, true));
+  window.ledwall.onUpdateDownloaded(({ version, manualOnly }) => showUpdate(
+    manualOnly ? `Update v${version} ready —` : `v${version} downloaded — installs on quit, or`, true));
 }
 
 // ---------- init ----------
