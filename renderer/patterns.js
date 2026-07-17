@@ -82,14 +82,25 @@
       name: 'Grid',
       params: ['fg', 'bg', 'size'],
       draw(ctx, cfg) {
+        // Panel-aware: bright lines on every panel seam; the fine sub-grid
+        // restarts at each panel's origin so every panel looks identical
+        // regardless of whether `size` divides the panel evenly.
         const { width: w, height: h } = cfg.wall;
+        const g = wallGrid(cfg.wall);
         const step = Math.max(2, cfg.pattern.size | 0);
         fillBG(ctx, cfg);
+        ctx.fillStyle = hexToRgba(cfg.pattern.fg, 0.45);
+        for (let c = 0; c < g.cols; c++) {
+          const end = Math.min(g.xs[c + 1], w);
+          for (let x = g.xs[c] + step; x < end; x += step) ctx.fillRect(x, 0, 1, h);
+        }
+        for (let r = 0; r < g.rows; r++) {
+          const end = Math.min(g.ys[r + 1], h);
+          for (let y = g.ys[r] + step; y < end; y += step) ctx.fillRect(0, y, w, 1);
+        }
         ctx.fillStyle = cfg.pattern.fg;
-        for (let x = 0; x < w; x += step) ctx.fillRect(x, 0, 1, h);
-        for (let y = 0; y < h; y += step) ctx.fillRect(0, y, w, 1);
-        ctx.fillRect(w - 1, 0, 1, h);
-        ctx.fillRect(0, h - 1, w, 1);
+        for (const x of g.xs) ctx.fillRect(Math.min(x, w - 1), 0, 1, h);
+        for (const y of g.ys) ctx.fillRect(0, Math.min(y, h - 1), w, 1);
       },
     },
 
@@ -97,13 +108,23 @@
       name: 'Checkerboard',
       params: ['fg', 'bg', 'size'],
       draw(ctx, cfg) {
+        // Panel-aware: the checker phase restarts at each panel's origin, so
+        // every panel starts with a background tile in its top-left corner —
+        // identical panels, and seams show up as phase resets.
         const { width: w, height: h } = cfg.wall;
+        const g = wallGrid(cfg.wall);
         const s = Math.max(1, cfg.pattern.size | 0);
         fillBG(ctx, cfg);
         ctx.fillStyle = cfg.pattern.fg;
-        for (let y = 0, ry = 0; y < h; y += s, ry++) {
-          for (let x = (ry & 1) ? s : 0; x < w; x += s * 2) {
-            ctx.fillRect(x, y, Math.min(s, w - x), Math.min(s, h - y));
+        for (let r = 0; r < g.rows; r++) {
+          for (let c = 0; c < g.cols; c++) {
+            const x0 = g.xs[c], y0 = g.ys[r];
+            const x1 = Math.min(g.xs[c + 1], w), y1 = Math.min(g.ys[r + 1], h);
+            for (let y = y0, ty = 0; y < y1; y += s, ty++) {
+              for (let x = x0 + ((ty & 1) ? 0 : s), tx = 0; x < x1; x += s * 2, tx++) {
+                ctx.fillRect(x, y, Math.min(s, x1 - x), Math.min(s, y1 - y));
+              }
+            }
           }
         }
       },

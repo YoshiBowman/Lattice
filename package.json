@@ -1,7 +1,7 @@
 {
   "name": "lattice",
   "productName": "Lattice",
-  "version": "0.4.0",
+  "version": "0.4.1",
   "description": "Lattice — LED wall test pattern generator. Live multi-output test feeds for any show wall configuration.",
   "main": "main.js",
   "scripts": {
