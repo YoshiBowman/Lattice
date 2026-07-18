@@ -12,6 +12,8 @@ contextBridge.exposeInMainWorld('ledwall', {
   nudgeOutput: (displayId, dx, dy) => ipcRenderer.invoke('nudge-output', displayId, dx, dy),
   saveLogo: (dataUrl) => ipcRenderer.invoke('save-logo', dataUrl),
   loadLogo: () => ipcRenderer.invoke('load-logo'),
+  saveShow: (json) => ipcRenderer.invoke('save-show', json),
+  loadShow: () => ipcRenderer.invoke('load-show'),
   onNudgeOutput: (cb) => ipcRenderer.on('nudge-output', (e, info) => cb(info)),
   stopAll: () => ipcRenderer.invoke('stop-all'),
   identify: () => ipcRenderer.invoke('identify'),

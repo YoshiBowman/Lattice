@@ -1,5 +1,5 @@
 'use strict';
-const { app, BrowserWindow, ipcMain, screen } = require('electron');
+const { app, BrowserWindow, ipcMain, screen, dialog } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const os = require('os');
@@ -311,6 +311,37 @@ ipcMain.handle('load-logo', () => {
     return fs.existsSync(logoPath()) ? fs.readFileSync(logoPath(), 'utf8') : null;
   } catch (err) {
     return null;
+  }
+});
+
+// ---------- show files (.lattice) ----------
+
+ipcMain.handle('save-show', async (e, json) => {
+  const res = await dialog.showSaveDialog(controlWin, {
+    title: 'Save Show',
+    defaultPath: 'show.lattice',
+    filters: [{ name: 'Lattice Show', extensions: ['lattice'] }],
+  });
+  if (res.canceled || !res.filePath) return { ok: false, canceled: true };
+  try {
+    fs.writeFileSync(res.filePath, json, 'utf8');
+    return { ok: true, path: res.filePath };
+  } catch (err) {
+    return { ok: false, error: err.message };
+  }
+});
+
+ipcMain.handle('load-show', async () => {
+  const res = await dialog.showOpenDialog(controlWin, {
+    title: 'Load Show',
+    properties: ['openFile'],
+    filters: [{ name: 'Lattice Show', extensions: ['lattice', 'json'] }],
+  });
+  if (res.canceled || !res.filePaths.length) return { ok: false, canceled: true };
+  try {
+    return { ok: true, path: res.filePaths[0], json: fs.readFileSync(res.filePaths[0], 'utf8') };
+  } catch (err) {
+    return { ok: false, error: err.message };
   }
 });
 

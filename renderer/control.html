@@ -9,6 +9,9 @@
   <header>
     <div class="brand">Lattice <span id="version" class="version"></span></div>
     <div class="header-actions">
+      <button id="saveShowBtn" class="btn">Save Show</button>
+      <button id="loadShowBtn" class="btn">Load Show</button>
+      <span class="header-sep"></span>
       <button id="exportBtn" class="btn">Export PNG</button>
       <button id="identifyBtn" class="btn">Identify Displays</button>
       <button id="stopAllBtn" class="btn danger">Stop All Outputs</button>
@@ -16,14 +19,13 @@
   </header>
 
   <main>
-    <aside id="controls">
+    <!-- ───────── column 1: geometry — the walls ───────── -->
+    <aside class="col" id="colWalls">
       <section class="card">
         <h2>Walls</h2>
         <div id="wallList"></div>
         <button id="addWallBtn" class="btn">+ Add Wall</button>
-        <div class="hint">Each wall has its own size, panel layout and orientation. Select one to edit
-          it below; assign walls to outputs in the Outputs panel. “Window” opens the wall in a virtual
-          output for pre-vis.</div>
+        <div class="hint">Select a wall to edit it below. “Window” opens it in a pre-vis window.</div>
       </section>
 
       <section class="card">
@@ -65,9 +67,8 @@
               <button class="chip" data-pitch="3.9">P3.9</button>
               <button class="chip" data-pitch="5.2">P5.2</button>
             </div>
-            <div class="hint">px = round(mm ÷ pitch). Spec-sheet pitch is often nominal — e.g. many
-              “P2.9” 500&nbsp;mm panels are really 168×168 (true pitch 2.976). If you know the panel’s
-              real resolution, fine-tune the pitch until the pixels match.</div>
+            <div class="hint">px = round(mm ÷ pitch). Spec pitch is often nominal — many “P2.9” 500&nbsp;mm
+              panels are really 168×168 (pitch 2.976); tune pitch until the pixels match.</div>
           </div>
           <div id="pxRows" style="display:none">
             <div class="preset-chips">
@@ -99,13 +100,18 @@
         </div>
         <div id="wallSummary" class="summary"></div>
       </section>
+    </aside>
 
+    <!-- ───────── column 2: content — what the walls display ───────── -->
+    <aside class="col" id="colContent">
       <section class="card">
-        <h2>Pattern</h2>
+        <h2>Test Pattern</h2>
         <div id="patternButtons" class="pattern-grid"></div>
         <div class="param-rows">
-          <label class="param" data-param="fg">Foreground<input type="color" id="fg" value="#ffffff"></label>
-          <label class="param" data-param="bg">Background<input type="color" id="bg" value="#000000"></label>
+          <div class="row2">
+            <label class="param" data-param="fg">Foreground<input type="color" id="fg" value="#ffffff"></label>
+            <label class="param" data-param="bg">Background<input type="color" id="bg" value="#000000"></label>
+          </div>
           <label class="param" data-param="size">Size / spacing
             <span class="range-wrap"><input type="range" id="size" min="1" max="256" value="16"><span id="sizeVal" class="val"></span></span>
           </label>
@@ -130,32 +136,11 @@
             </select>
           </label>
         </div>
-        <div class="readout-row">
-          <label class="check"><input type="checkbox" id="roLabel"> Center label</label>
-          <label class="check"><input type="checkbox" id="roDims"> Wall dimensions</label>
-          <label class="check"><input type="checkbox" id="roScrim"> Backdrop</label>
-        </div>
-        <div class="readout-row">
-          <label class="inline-sel">Font
-            <select id="roFont">
-              <option value="mono">Mono (Menlo)</option>
-              <option value="sans">Sans (Helvetica)</option>
-              <option value="black">Heavy (Arial Black)</option>
-              <option value="condensed">Condensed</option>
-              <option value="serif">Serif (Georgia)</option>
-            </select>
-          </label>
-          <label class="file-btn btn">Logo PNG…<input type="file" id="roImage" accept="image/png,image/jpeg,image/webp"></label>
-          <button id="roImageClear" class="btn small remove" style="display:none">✕ logo</button>
-        </div>
-        <div class="hint">Rendered into the pattern itself — shows on outputs, preview and exports.
-          The center label is the output's label (or the wall name if none is set); the logo sits
-          under the text.</div>
       </section>
 
       <section class="card">
         <h2>Overlay Pulse</h2>
-        <div id="overlayButtons" class="pattern-grid"></div>
+        <div id="overlayButtons" class="pattern-grid overlay-grid"></div>
         <div class="param-rows">
           <label class="oparam" data-param="ovColor">Color<input type="color" id="ovColor" value="#3fb950"></label>
           <label class="oparam" data-param="ovOpacity">Opacity
@@ -172,12 +157,36 @@
             </select>
           </label>
         </div>
-        <div class="hint">Sweeps over the active pattern — watch it cross panel seams to catch
-          mapping errors.</div>
+        <div class="hint">Sweeps over the pattern — watch it cross panel seams.</div>
+      </section>
+
+      <section class="card">
+        <h2>Label &amp; Readout</h2>
+        <div class="check-grid">
+          <label class="check"><input type="checkbox" id="roLabel"> Center label</label>
+          <label class="check"><input type="checkbox" id="roDims"> Wall dimensions</label>
+          <label class="check"><input type="checkbox" id="roScrim"> Backdrop</label>
+        </div>
+        <label>Font
+          <select id="roFont">
+            <option value="mono">Mono (Menlo)</option>
+            <option value="sans">Sans (Helvetica)</option>
+            <option value="black">Heavy (Arial Black)</option>
+            <option value="condensed">Condensed</option>
+            <option value="serif">Serif (Georgia)</option>
+          </select>
+        </label>
+        <div class="logo-row">
+          <label class="file-btn btn">Logo PNG…<input type="file" id="roImage" accept="image/png,image/jpeg,image/webp"></label>
+          <button id="roImageClear" class="btn small remove" style="display:none">✕ logo</button>
+        </div>
+        <div class="hint">Rendered into the pattern — identical on outputs, preview and exports.
+          The label is the output's label, or the wall name if none is set.</div>
       </section>
     </aside>
 
-    <section id="right">
+    <!-- ───────── column 3: preview + routing ───────── -->
+    <section id="colRight">
       <section class="card">
         <h2>Preview <span id="previewRes" class="summary-inline"></span></h2>
         <div id="previewBox"><canvas id="preview"></canvas></div>
@@ -192,10 +201,9 @@
           <label>H<input type="number" id="vH" min="16" max="16384" value="1080"></label>
           <button id="addVirtualBtn" class="btn">+ Add Virtual Output</button>
         </div>
-        <div class="hint">Physical displays appear automatically — graphics card outputs, or a playback
-          card whose driver presents it as a display. Virtual outputs are windows that behave like a
-          display of the given resolution, so you can map the whole show before hardware is connected.
-          Press ESC on an output to close it.</div>
+        <div class="hint">Physical displays appear automatically. Virtual outputs are windows that act
+          like a display of the given resolution. ESC closes an output; arrow keys nudge its position
+          (Shift = 10 px).</div>
       </section>
     </section>
   </main>

@@ -44,6 +44,12 @@ git tag v<version> && git push origin main --tags
 
 ## What it does
 
+- **Show files** — Save Show / Load Show (.lattice) capture everything: every wall, pattern
+  and overlay settings, label/readout styling including the logo, virtual outputs and all
+  output assignments (scale mode, crop, position). Build the show at home, load it at the
+  venue. The control window is organized in three columns: **Walls** (geometry), **content**
+  (pattern / overlay pulse / label & readout), and **Preview + Outputs** (routing).
+
 - **Multiple walls** — build every wall in the show as its own entry (name, size, panel
   layout, orientation): 11 walls of 11 different shapes is a normal day. Select a wall to
   edit it, duplicate for variants, and pick its destination from the **Send to output**

@@ -37,28 +37,30 @@ const previewCtx = preview.getContext('2d');
 const renderPreviewFrame = window.LED_CREATE_FRAME_RENDERER();
 let previewBoxW = 0; // cached; reading clientWidth every frame forces reflow
 
+// Normalize any saved config shape (localStorage, legacy single-wall, or a
+// .lattice show file) into the current structure with defaults filled in.
+function normalizeConfig(saved) {
+  if (!saved.walls && saved.wall) {
+    saved.walls = [{ ...saved.wall, id: 'w1', name: 'Wall 1' }];
+    saved.selectedWall = 'w1';
+  }
+  const walls = (saved.walls && saved.walls.length ? saved.walls : DEFAULTS.walls)
+    .map((w, i) => ({ ...WALL_DEFAULTS, name: `Wall ${i + 1}`, id: 'w' + (i + 1), ...w }));
+  return {
+    walls,
+    selectedWall: walls.some((w) => w.id === saved.selectedWall) ? saved.selectedWall : walls[0].id,
+    pattern: { ...DEFAULTS.pattern, ...saved.pattern },
+    overlay: { ...DEFAULTS.overlay, ...saved.overlay },
+    readout: { ...DEFAULTS.readout, ...saved.readout },
+    outputs: saved.outputs || {},
+    virtualOutputs: saved.virtualOutputs || [],
+  };
+}
+
 function loadConfig() {
   try {
     const raw = localStorage.getItem(STORAGE_KEY) || localStorage.getItem(LEGACY_STORAGE_KEY);
-    if (raw) {
-      const saved = JSON.parse(raw);
-      // migrate single-wall configs (pre-0.6) to the walls list
-      if (!saved.walls && saved.wall) {
-        saved.walls = [{ ...saved.wall, id: 'w1', name: 'Wall 1' }];
-        saved.selectedWall = 'w1';
-      }
-      const walls = (saved.walls && saved.walls.length ? saved.walls : DEFAULTS.walls)
-        .map((w, i) => ({ ...WALL_DEFAULTS, name: `Wall ${i + 1}`, id: 'w' + (i + 1), ...w }));
-      return {
-        walls,
-        selectedWall: walls.some((w) => w.id === saved.selectedWall) ? saved.selectedWall : walls[0].id,
-        pattern: { ...DEFAULTS.pattern, ...saved.pattern },
-        overlay: { ...DEFAULTS.overlay, ...saved.overlay },
-        readout: { ...DEFAULTS.readout, ...saved.readout },
-        outputs: saved.outputs || {},
-        virtualOutputs: saved.virtualOutputs || [],
-      };
-    }
+    if (raw) return normalizeConfig(JSON.parse(raw));
   } catch (err) { /* corrupted config — fall through to defaults */ }
   return JSON.parse(JSON.stringify(DEFAULTS));
 }
@@ -426,11 +428,22 @@ function wallSelectFor(oc) {
   return sel;
 }
 
-function appendOutputControls(ctl, key, oc, active, startFn, nameEl) {
+function field(caption, el, title) {
+  const lab = document.createElement('label');
+  lab.className = 'field';
+  if (title) lab.title = title;
+  const cap = document.createElement('span');
+  cap.textContent = caption;
+  lab.append(cap, el);
+  return lab;
+}
+
+// The labeled control row shared by physical and virtual output cards.
+function appendOutputControls(ctl, key, oc, nameEl) {
   const labelInput = document.createElement('input');
   labelInput.type = 'text';
   labelInput.className = 'olabel';
-  labelInput.placeholder = 'Output label';
+  labelInput.placeholder = 'e.g. STAGE LEFT';
   labelInput.value = oc.label || '';
   // 'input' so the label applies live with every keystroke — no blur needed
   labelInput.addEventListener('input', () => {
@@ -438,9 +451,9 @@ function appendOutputControls(ctl, key, oc, active, startFn, nameEl) {
     if (nameEl) nameEl.textContent = oc.label || nameEl.dataset.fallback;
     push();
   });
-  ctl.appendChild(labelInput);
+  ctl.appendChild(field('Label', labelInput));
 
-  ctl.appendChild(wallSelectFor(oc));
+  ctl.appendChild(field('Wall', wallSelectFor(oc), 'Which wall this output displays'));
 
   const modeSel = document.createElement('select');
   for (const [val, label] of [['fit', 'Fit'], ['fill', 'Fill'], ['stretch', 'Stretch'], ['1to1', '1:1 pixel']]) {
@@ -451,19 +464,15 @@ function appendOutputControls(ctl, key, oc, active, startFn, nameEl) {
   }
   modeSel.value = oc.mode;
   modeSel.addEventListener('change', () => { oc.mode = modeSel.value; renderDisplays(); push(); });
-  ctl.appendChild(modeSel);
+  ctl.appendChild(field('Scale', modeSel));
 
   if (oc.mode === '1to1') {
     for (const key2 of ['offsetX', 'offsetY']) {
-      const lab = document.createElement('label');
-      lab.title = 'Which part of the wall this output shows (source crop)';
-      lab.textContent = key2 === 'offsetX' ? 'Crop X' : 'Crop Y';
       const inp = document.createElement('input');
       inp.type = 'number'; inp.min = '0'; inp.step = '1'; inp.value = oc[key2];
       inp.className = 'pos';
       inp.addEventListener('change', () => { oc[key2] = Math.max(0, inp.value | 0); push(); });
-      lab.appendChild(inp);
-      ctl.appendChild(lab);
+      ctl.appendChild(field(key2 === 'offsetX' ? 'Crop X' : 'Crop Y', inp, 'Which part of the wall this output shows (source crop)'));
     }
   }
 
@@ -471,27 +480,25 @@ function appendOutputControls(ctl, key, oc, active, startFn, nameEl) {
   // region that doesn't start at the frame's top-left. Arrow keys on the
   // output window nudge these live (Shift = 10 px).
   for (const key3 of ['posX', 'posY']) {
-    const lab = document.createElement('label');
-    lab.title = 'Position of the image within the output frame (arrow keys on the output nudge this)';
-    lab.textContent = key3 === 'posX' ? 'Pos X' : 'Pos Y';
     const inp = document.createElement('input');
     inp.type = 'number'; inp.step = '1'; inp.value = oc[key3] | 0;
     inp.className = 'pos';
     inp.dataset.poskey = key3;
     inp.dataset.outid = String(key);
     inp.addEventListener('change', () => { oc[key3] = inp.value | 0; push(); });
-    lab.appendChild(inp);
-    ctl.appendChild(lab);
+    ctl.appendChild(field(key3 === 'posX' ? 'Pos X' : 'Pos Y', inp, 'Position within the output frame (arrow keys on the output nudge this)'));
   }
+}
 
+function startStopButton(key, active, startFn) {
   const btn = document.createElement('button');
   btn.className = active ? 'btn danger' : 'btn primary';
-  btn.textContent = active ? 'Stop' : 'Start Output';
+  btn.textContent = active ? 'Stop' : 'Start';
   btn.addEventListener('click', () => {
     if (active) window.ledwall.stopOutput(key);
     else startFn();
   });
-  ctl.appendChild(btn);
+  return btn;
 }
 
 function renderDisplays() {
@@ -517,19 +524,22 @@ function renderDisplays() {
       (d.scaleFactor !== 1 ? ` (${d.bounds.width} × ${d.bounds.height} pt @ ${d.scaleFactor}x)` : '');
     info.append(name, res);
 
-    const ctl = document.createElement('div');
-    ctl.className = 'dctl';
-
+    const head = document.createElement('div');
+    head.className = 'dhead';
+    head.append(num, info);
     if (d.active) {
       const badge = document.createElement('span');
       badge.className = 'badge live';
       badge.textContent = 'Live';
-      ctl.appendChild(badge);
+      head.appendChild(badge);
     }
+    head.appendChild(startStopButton(d.id, d.active, () => window.ledwall.startOutput(d.id)));
 
-    appendOutputControls(ctl, d.id, oc, d.active, () => window.ledwall.startOutput(d.id));
+    const ctl = document.createElement('div');
+    ctl.className = 'dctl';
+    appendOutputControls(ctl, d.id, oc, null);
 
-    card.append(num, info, ctl);
+    card.append(head, ctl);
     box.appendChild(card);
   }
   renderVirtuals();
@@ -560,17 +570,15 @@ function renderVirtuals() {
     res.textContent = `${v.width} × ${v.height} px — virtual`;
     info.append(name, res);
 
-    const ctl = document.createElement('div');
-    ctl.className = 'dctl';
-
+    const head = document.createElement('div');
+    head.className = 'dhead';
+    head.append(num, info);
     const badge = document.createElement('span');
     badge.className = active ? 'badge live' : 'badge virtual';
     badge.textContent = active ? 'Live' : 'Virtual';
-    ctl.appendChild(badge);
-
-    appendOutputControls(ctl, v.id, oc, active,
-      () => window.ledwall.startOutput(v.id, { width: v.width, height: v.height, label: oc.label }),
-      name);
+    head.appendChild(badge);
+    head.appendChild(startStopButton(v.id, active,
+      () => window.ledwall.startOutput(v.id, { width: v.width, height: v.height, label: oc.label })));
 
     const rm = document.createElement('button');
     rm.className = 'btn remove';
@@ -583,9 +591,13 @@ function renderVirtuals() {
       push();
       renderDisplays();
     });
-    ctl.appendChild(rm);
+    head.appendChild(rm);
 
-    card.append(num, info, ctl);
+    const ctl = document.createElement('div');
+    ctl.className = 'dctl';
+    appendOutputControls(ctl, v.id, oc, name);
+
+    card.append(head, ctl);
     box.appendChild(card);
   });
 }
@@ -598,6 +610,75 @@ function addVirtualOutput() {
   cfg.virtualOutputs.push({ id, width, height });
   push();
   renderDisplays();
+}
+
+// ---------- show files ----------
+
+// re-sync every content/readout input from cfg (after loading a show)
+function syncContentUI() {
+  $('#fg').value = cfg.pattern.fg;
+  $('#bg').value = cfg.pattern.bg;
+  $('#size').value = cfg.pattern.size;
+  $('#sizeVal').textContent = `${cfg.pattern.size}px`;
+  $('#speed').value = cfg.pattern.speed;
+  $('#speedVal').textContent = `${cfg.pattern.speed}×`;
+  $('#gradMode').value = cfg.pattern.gradMode;
+  $('#dir').value = cfg.pattern.dir || 'h';
+  $('#ovColor').value = cfg.overlay.color;
+  $('#ovOpacity').value = cfg.overlay.opacity;
+  $('#ovOpacityVal').textContent = `${cfg.overlay.opacity}%`;
+  $('#ovSpeed').value = cfg.overlay.speed;
+  $('#ovSpeedVal').textContent = `${cfg.overlay.speed}×`;
+  $('#ovDir').value = cfg.overlay.dir;
+  $('#roLabel').checked = cfg.readout.label !== false;
+  $('#roDims').checked = !!cfg.readout.dims;
+  $('#roScrim').checked = cfg.readout.scrim !== false;
+  $('#roFont').value = cfg.readout.font || 'mono';
+  $('#roImageClear').style.display = cfg.readout.image ? '' : 'none';
+}
+
+function flashButton(id, text) {
+  const btn = $(id);
+  const orig = btn.textContent;
+  btn.textContent = text;
+  setTimeout(() => { btn.textContent = orig; }, 1600);
+}
+
+async function saveShowFile() {
+  resolveWalls();
+  const payload = JSON.stringify({
+    latticeShow: 1,
+    savedAt: new Date().toISOString(),
+    cfg, // includes the logo data URL — show files are self-contained
+  }, null, 2);
+  const res = await window.ledwall.saveShow(payload);
+  if (res.ok) flashButton('#saveShowBtn', 'Saved ✓');
+  else if (!res.canceled) alert('Could not save show: ' + res.error);
+}
+
+async function loadShowFile() {
+  const res = await window.ledwall.loadShow();
+  if (!res.ok) {
+    if (!res.canceled) alert('Could not load show: ' + res.error);
+    return;
+  }
+  try {
+    const data = JSON.parse(res.json);
+    const savedCfg = data.cfg || data;
+    if (!savedCfg.walls && !savedCfg.wall) throw new Error('not a Lattice show file');
+    cfg = normalizeConfig(savedCfg);
+    if (cfg.readout.image && typeof cfg.readout.image === 'string') window.ledwall.saveLogo(cfg.readout.image);
+    else { cfg.readout.image = null; window.ledwall.saveLogo(null); }
+    syncWallInputs();
+    syncPatternUI();
+    syncOverlayUI();
+    syncContentUI();
+    push();
+    renderDisplays();
+    flashButton('#loadShowBtn', 'Loaded ✓');
+  } catch (err) {
+    alert('Could not load show: ' + err.message);
+  }
 }
 
 // ---------- export ----------
@@ -873,6 +954,8 @@ function wireInputs() {
   $('#exportBtn').addEventListener('click', exportWallPNG);
   $('#addVirtualBtn').addEventListener('click', addVirtualOutput);
   $('#addWallBtn').addEventListener('click', addWall);
+  $('#saveShowBtn').addEventListener('click', saveShowFile);
+  $('#loadShowBtn').addEventListener('click', loadShowFile);
   wireWallOutputSelect();
 }
 
