@@ -138,6 +138,17 @@ input[type="text"] {
 
 .btn.remove { border-color: var(--border); color: var(--muted); padding: 7px 10px; }
 .btn.remove:hover { border-color: var(--danger); color: var(--danger); }
+.btn.small { padding: 4px 9px; font-size: 11px; }
+
+.wall-row {
+  display: flex; align-items: center; gap: 8px;
+  background: var(--panel2); border: 1px solid var(--border); border-radius: 8px;
+  padding: 8px 10px; margin-bottom: 6px; cursor: pointer;
+}
+.wall-row.selected { border-color: var(--accent); }
+.wall-row .wname { font-weight: 600; flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.wall-row .wres { color: var(--muted); font-size: 11px; white-space: nowrap; }
+.wall-row .wctl { display: flex; gap: 4px; }
 
 .btn {
   padding: 7px 14px; background: var(--panel2); color: var(--text);

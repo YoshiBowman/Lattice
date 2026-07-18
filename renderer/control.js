@@ -4,25 +4,32 @@ const $ = (s) => document.querySelector(s);
 const STORAGE_KEY = 'lattice-config-v1';
 const LEGACY_STORAGE_KEY = 'ledwall-config-v1'; // pre-rename builds
 
+// Per-wall fields. A show can have many walls, each with its own size,
+// panel layout and orientation; outputs are assigned a wall to display.
+const WALL_DEFAULTS = {
+  name: 'Wall 1',
+  mode: 'uniform', // 'uniform' | 'manual'
+  defineBy: 'mm',  // 'mm' (physical size + pitch) | 'px'
+  mmW: 500, mmH: 500, pitch: 2.9,
+  panelW: 172, panelH: 172, panelsX: 8, panelsY: 4,
+  colWidths: [500, 500], rowHeights: [500, 500],
+  custom: false, width: 1376, height: 688,
+};
+
 const DEFAULTS = {
-  wall: {
-    mode: 'uniform', // 'uniform' | 'manual'
-    defineBy: 'mm',  // 'mm' (physical size + pitch) | 'px'
-    mmW: 500, mmH: 500, pitch: 2.9,
-    panelW: 172, panelH: 172, panelsX: 8, panelsY: 4,
-    colWidths: [500, 500], rowHeights: [500, 500],
-    custom: false, width: 1024, height: 512,
-  },
+  walls: [{ ...WALL_DEFAULTS, id: 'w1' }],
+  selectedWall: 'w1',
   pattern: { type: 'grid', fg: '#ffffff', bg: '#000000', size: 16, speed: 2, gradMode: 'gray-h', dir: 'h' },
   overlay: { type: 'none', color: '#3fb950', opacity: 70, speed: 1, dir: 'h' },
-  outputs: {}, // displayId | virtual id -> { mode, offsetX, offsetY, label, showLabel }
-  virtualOutputs: [], // [{ id: 'v1', width, height }]
+  outputs: {}, // displayId | virtual id -> { mode, offsetX, offsetY, label, showLabel, wallId }
+  virtualOutputs: [], // [{ id: 'v...', width, height }]
 };
 
 let cfg = loadConfig();
 let displays = [];
 let previewRaf = null;
 let activeSet = new Set(); // stringified ids of currently running outputs
+let vSeq = 0;
 
 const preview = $('#preview');
 const previewCtx = preview.getContext('2d');
@@ -32,8 +39,16 @@ function loadConfig() {
     const raw = localStorage.getItem(STORAGE_KEY) || localStorage.getItem(LEGACY_STORAGE_KEY);
     if (raw) {
       const saved = JSON.parse(raw);
+      // migrate single-wall configs (pre-0.6) to the walls list
+      if (!saved.walls && saved.wall) {
+        saved.walls = [{ ...saved.wall, id: 'w1', name: 'Wall 1' }];
+        saved.selectedWall = 'w1';
+      }
+      const walls = (saved.walls && saved.walls.length ? saved.walls : DEFAULTS.walls)
+        .map((w, i) => ({ ...WALL_DEFAULTS, name: `Wall ${i + 1}`, id: 'w' + (i + 1), ...w }));
       return {
-        wall: { ...DEFAULTS.wall, ...saved.wall },
+        walls,
+        selectedWall: walls.some((w) => w.id === saved.selectedWall) ? saved.selectedWall : walls[0].id,
         pattern: { ...DEFAULTS.pattern, ...saved.pattern },
         overlay: { ...DEFAULTS.overlay, ...saved.overlay },
         outputs: saved.outputs || {},
@@ -44,10 +59,12 @@ function loadConfig() {
   return JSON.parse(JSON.stringify(DEFAULTS));
 }
 
-function resolveWall() {
-  const w = cfg.wall;
+function curWall() {
+  return cfg.walls.find((w) => w.id === cfg.selectedWall) || cfg.walls[0];
+}
+
+function resolveWall(w) {
   if (w.mode !== 'manual' && w.defineBy === 'mm') {
-    // physical cabinet size + pixel pitch -> pixels per panel
     const pitch = Math.max(0.1, parseFloat(w.pitch) || 2.9);
     w.panelW = Math.max(1, Math.round(w.mmW / pitch));
     w.panelH = Math.max(1, Math.round(w.mmH / pitch));
@@ -59,6 +76,8 @@ function resolveWall() {
   }
 }
 
+function resolveWalls() { cfg.walls.forEach(resolveWall); }
+
 function parsePxList(raw, fallback) {
   const arr = String(raw).split(/[,\s]+/)
     .map((x) => parseInt(x, 10))
@@ -67,15 +86,21 @@ function parsePxList(raw, fallback) {
 }
 
 function push() {
-  resolveWall();
+  resolveWalls();
   localStorage.setItem(STORAGE_KEY, JSON.stringify(cfg));
   window.ledwall.setConfig(cfg);
   updateSummary();
+  renderWalls();
   startPreview();
 }
 
+function wallSummaryText(w) {
+  const g = window.LED_WALL_GRID(w);
+  return `${w.width} × ${w.height} px (${g.cols} × ${g.rows})`;
+}
+
 function updateSummary() {
-  const w = cfg.wall;
+  const w = curWall();
   const g = window.LED_WALL_GRID(w);
   const lastCol = window.LED_COL_LETTER(g.cols - 1);
   let text = `Wall canvas: ${w.width} × ${w.height} px — panels A1…${lastCol}${g.rows} (${g.cols} × ${g.rows})`;
@@ -86,7 +111,107 @@ function updateSummary() {
     $('#pxPerPanel').textContent = `${w.panelW} × ${w.panelH} px`;
   }
   $('#wallSummary').textContent = text;
-  $('#previewRes').textContent = `${w.width} × ${w.height}`;
+  $('#previewRes').textContent = `${w.name}: ${w.width} × ${w.height}`;
+}
+
+// ---------- walls list ----------
+
+function renderWalls() {
+  const box = $('#wallList');
+  box.innerHTML = '';
+  cfg.walls.forEach((w) => {
+    const row = document.createElement('div');
+    row.className = 'wall-row' + (w.id === cfg.selectedWall ? ' selected' : '');
+    row.addEventListener('click', () => {
+      if (cfg.selectedWall !== w.id) {
+        cfg.selectedWall = w.id;
+        syncWallInputs();
+        push();
+      }
+    });
+
+    const name = document.createElement('div');
+    name.className = 'wname';
+    name.textContent = w.name;
+
+    const res = document.createElement('div');
+    res.className = 'wres';
+    res.textContent = wallSummaryText(w);
+
+    const ctl = document.createElement('div');
+    ctl.className = 'wctl';
+
+    const winBtn = document.createElement('button');
+    winBtn.className = 'btn small';
+    winBtn.textContent = 'Window';
+    winBtn.title = 'Open this wall in a virtual output window';
+    winBtn.addEventListener('click', (e) => { e.stopPropagation(); previewWallInWindow(w); });
+    ctl.appendChild(winBtn);
+
+    const dupBtn = document.createElement('button');
+    dupBtn.className = 'btn small';
+    dupBtn.textContent = '⧉';
+    dupBtn.title = 'Duplicate wall';
+    dupBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const copy = { ...w, id: newWallId(), name: w.name + ' copy', colWidths: w.colWidths.slice(), rowHeights: w.rowHeights.slice() };
+      cfg.walls.push(copy);
+      cfg.selectedWall = copy.id;
+      syncWallInputs();
+      push();
+      renderDisplays();
+    });
+    ctl.appendChild(dupBtn);
+
+    if (cfg.walls.length > 1) {
+      const rmBtn = document.createElement('button');
+      rmBtn.className = 'btn small remove';
+      rmBtn.textContent = '✕';
+      rmBtn.title = 'Remove wall';
+      rmBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        cfg.walls = cfg.walls.filter((x) => x.id !== w.id);
+        if (cfg.selectedWall === w.id) cfg.selectedWall = cfg.walls[0].id;
+        syncWallInputs();
+        push();
+        renderDisplays();
+      });
+      ctl.appendChild(rmBtn);
+    }
+
+    row.append(name, res, ctl);
+    box.appendChild(row);
+  });
+}
+
+function newWallId() {
+  let id;
+  do { id = 'w' + Date.now().toString(36) + (vSeq++); } while (cfg.walls.some((x) => x.id === id));
+  return id;
+}
+
+function addWall() {
+  const w = { ...WALL_DEFAULTS, id: newWallId(), name: `Wall ${cfg.walls.length + 1}`, colWidths: [500, 500], rowHeights: [500, 500] };
+  cfg.walls.push(w);
+  cfg.selectedWall = w.id;
+  syncWallInputs();
+  push();
+  renderDisplays();
+}
+
+// Open a wall in a virtual output window at native wall resolution, 1:1
+function previewWallInWindow(w) {
+  resolveWalls();
+  let id;
+  do { id = 'v' + Date.now().toString(36) + (vSeq++); } while (cfg.virtualOutputs.some((x) => x.id === id));
+  cfg.virtualOutputs.push({ id, width: w.width, height: w.height });
+  const oc = outCfgFor(id);
+  oc.wallId = w.id;
+  oc.mode = '1to1';
+  oc.label = w.name;
+  push();
+  renderDisplays();
+  window.ledwall.startOutput(id, { width: w.width, height: w.height, label: w.name });
 }
 
 // ---------- pattern buttons & params ----------
@@ -149,14 +274,13 @@ function syncOverlayUI() {
   $('#ovSpeedVal').textContent = `${cfg.overlay.speed}×`;
 }
 
-// ---------- preview ----------
+// ---------- preview (renders the SELECTED wall) ----------
 
 // Build a config whose wall is scaled to preview size, with panel seams at
 // rounded positions. Rendering the pattern AT preview resolution keeps every
-// seam a crisp, uniform 1px line — downscaling a wall-resolution image instead
-// makes 1px lines vanish or vary in brightness depending on where they land.
-function scaledCfgFor(s) {
-  const g = window.LED_WALL_GRID(cfg.wall);
+// seam a crisp, uniform 1px line.
+function scaledCfgFor(w, s) {
+  const g = window.LED_WALL_GRID(w);
   const xs = g.xs.map((v) => Math.round(v * s));
   const ys = g.ys.map((v) => Math.round(v * s));
   const colWidths = [], rowHeights = [];
@@ -164,26 +288,26 @@ function scaledCfgFor(s) {
   for (let i = 0; i < g.rows; i++) rowHeights.push(Math.max(1, ys[i + 1] - ys[i]));
   return {
     wall: {
-      ...cfg.wall,
+      ...w,
       mode: 'manual',
       colWidths, rowHeights,
       custom: true,
-      width: Math.max(1, Math.round(cfg.wall.width * s)),
-      height: Math.max(1, Math.round(cfg.wall.height * s)),
+      width: Math.max(1, Math.round(w.width * s)),
+      height: Math.max(1, Math.round(w.height * s)),
       pxLabelScale: 1 / s, // panelmap shows true panel px, not scaled
     },
     pattern: { ...cfg.pattern, size: Math.max(1, Math.round((cfg.pattern.size || 16) * s)) },
     overlay: cfg.overlay,
-    outputs: cfg.outputs,
   };
 }
 
 function drawPreviewFrame(t) {
-  resolveWall();
+  const w = curWall();
+  resolveWall(w);
   const boxW = Math.max(100, $('#previewBox').clientWidth - 16);
   const boxH = 300;
-  const s = Math.min(boxW / cfg.wall.width, boxH / cfg.wall.height, 1);
-  const pcfg = s < 1 ? scaledCfgFor(s) : cfg;
+  const s = Math.min(boxW / w.width, boxH / w.height, 1);
+  const pcfg = s < 1 ? scaledCfgFor(w, s) : { wall: w, pattern: cfg.pattern, overlay: cfg.overlay };
   if (preview.width !== pcfg.wall.width) preview.width = pcfg.wall.width;
   if (preview.height !== pcfg.wall.height) preview.height = pcfg.wall.height;
   window.LED_RENDER_FRAME(previewCtx, pcfg, t);
@@ -202,8 +326,80 @@ function startPreview() {
 // ---------- outputs ----------
 
 function outCfgFor(id) {
-  if (!cfg.outputs[id]) cfg.outputs[id] = { mode: 'fit', offsetX: 0, offsetY: 0, label: '', showLabel: false };
+  if (!cfg.outputs[id]) cfg.outputs[id] = { mode: 'fit', offsetX: 0, offsetY: 0, label: '', showLabel: false, wallId: cfg.walls[0].id };
   return cfg.outputs[id];
+}
+
+function wallSelectFor(oc) {
+  const sel = document.createElement('select');
+  for (const w of cfg.walls) {
+    const opt = document.createElement('option');
+    opt.value = w.id;
+    opt.textContent = w.name;
+    sel.appendChild(opt);
+  }
+  sel.value = cfg.walls.some((w) => w.id === oc.wallId) ? oc.wallId : cfg.walls[0].id;
+  sel.title = 'Which wall this output displays';
+  sel.addEventListener('change', () => { oc.wallId = sel.value; push(); });
+  return sel;
+}
+
+function appendOutputControls(ctl, key, oc, active, startFn, nameEl) {
+  const labelInput = document.createElement('input');
+  labelInput.type = 'text';
+  labelInput.className = 'olabel';
+  labelInput.placeholder = 'Output label';
+  labelInput.value = oc.label || '';
+  // 'input' so the label applies live with every keystroke — no blur needed
+  labelInput.addEventListener('input', () => {
+    oc.label = labelInput.value.trim();
+    if (nameEl) nameEl.textContent = oc.label || nameEl.dataset.fallback;
+    push();
+  });
+  ctl.appendChild(labelInput);
+
+  const showLab = document.createElement('label');
+  showLab.className = 'check-inline';
+  const showChk = document.createElement('input');
+  showChk.type = 'checkbox';
+  showChk.checked = !!oc.showLabel;
+  showChk.addEventListener('change', () => { oc.showLabel = showChk.checked; push(); });
+  showLab.append(showChk, document.createTextNode(' overlay'));
+  ctl.appendChild(showLab);
+
+  ctl.appendChild(wallSelectFor(oc));
+
+  const modeSel = document.createElement('select');
+  for (const [val, label] of [['fit', 'Fit'], ['fill', 'Fill'], ['stretch', 'Stretch'], ['1to1', '1:1 pixel']]) {
+    const opt = document.createElement('option');
+    opt.value = val;
+    opt.textContent = label;
+    modeSel.appendChild(opt);
+  }
+  modeSel.value = oc.mode;
+  modeSel.addEventListener('change', () => { oc.mode = modeSel.value; renderDisplays(); push(); });
+  ctl.appendChild(modeSel);
+
+  if (oc.mode === '1to1') {
+    for (const key2 of ['offsetX', 'offsetY']) {
+      const lab = document.createElement('label');
+      lab.textContent = key2 === 'offsetX' ? 'X' : 'Y';
+      const inp = document.createElement('input');
+      inp.type = 'number'; inp.min = '0'; inp.step = '1'; inp.value = oc[key2];
+      inp.addEventListener('change', () => { oc[key2] = Math.max(0, inp.value | 0); push(); });
+      lab.appendChild(inp);
+      ctl.appendChild(lab);
+    }
+  }
+
+  const btn = document.createElement('button');
+  btn.className = active ? 'btn danger' : 'btn primary';
+  btn.textContent = active ? 'Stop' : 'Start Output';
+  btn.addEventListener('click', () => {
+    if (active) window.ledwall.stopOutput(key);
+    else startFn();
+  });
+  ctl.appendChild(btn);
 }
 
 function renderDisplays() {
@@ -239,54 +435,7 @@ function renderDisplays() {
       ctl.appendChild(badge);
     }
 
-    const labelInput = document.createElement('input');
-    labelInput.type = 'text';
-    labelInput.className = 'olabel';
-    labelInput.placeholder = 'Output label';
-    labelInput.value = oc.label || '';
-    // 'input' so the label applies live with every keystroke — no blur needed
-    labelInput.addEventListener('input', () => { oc.label = labelInput.value.trim(); push(); });
-    ctl.appendChild(labelInput);
-
-    const showLab = document.createElement('label');
-    showLab.className = 'check-inline';
-    const showChk = document.createElement('input');
-    showChk.type = 'checkbox';
-    showChk.checked = !!oc.showLabel;
-    showChk.addEventListener('change', () => { oc.showLabel = showChk.checked; push(); });
-    showLab.append(showChk, document.createTextNode(' overlay'));
-    ctl.appendChild(showLab);
-
-    const modeSel = document.createElement('select');
-    for (const [v, label] of [['fit', 'Fit'], ['fill', 'Fill'], ['stretch', 'Stretch'], ['1to1', '1:1 pixel']]) {
-      const opt = document.createElement('option');
-      opt.value = v; opt.textContent = label;
-      modeSel.appendChild(opt);
-    }
-    modeSel.value = oc.mode;
-    modeSel.addEventListener('change', () => { oc.mode = modeSel.value; renderDisplays(); push(); });
-    ctl.appendChild(modeSel);
-
-    if (oc.mode === '1to1') {
-      for (const key of ['offsetX', 'offsetY']) {
-        const lab = document.createElement('label');
-        lab.textContent = key === 'offsetX' ? 'X' : 'Y';
-        const inp = document.createElement('input');
-        inp.type = 'number'; inp.min = '0'; inp.step = '1'; inp.value = oc[key];
-        inp.addEventListener('change', () => { oc[key] = Math.max(0, inp.value | 0); push(); });
-        lab.appendChild(inp);
-        ctl.appendChild(lab);
-      }
-    }
-
-    const btn = document.createElement('button');
-    btn.className = d.active ? 'btn danger' : 'btn primary';
-    btn.textContent = d.active ? 'Stop' : 'Start Output';
-    btn.addEventListener('click', () => {
-      if (d.active) window.ledwall.stopOutput(d.id);
-      else window.ledwall.startOutput(d.id);
-    });
-    ctl.appendChild(btn);
+    appendOutputControls(ctl, d.id, oc, d.active, () => window.ledwall.startOutput(d.id));
 
     card.append(num, info, ctl);
     box.appendChild(card);
@@ -311,7 +460,8 @@ function renderVirtuals() {
     info.className = 'dinfo';
     const name = document.createElement('div');
     name.className = 'dname';
-    name.textContent = oc.label || `Virtual output ${i + 1}`;
+    name.dataset.fallback = `Virtual output ${i + 1}`;
+    name.textContent = oc.label || name.dataset.fallback;
     const res = document.createElement('div');
     res.className = 'dres';
     res.textContent = `${v.width} × ${v.height} px — virtual`;
@@ -325,57 +475,9 @@ function renderVirtuals() {
     badge.textContent = active ? 'Live' : 'Virtual';
     ctl.appendChild(badge);
 
-    const labelInput = document.createElement('input');
-    labelInput.type = 'text';
-    labelInput.className = 'olabel';
-    labelInput.placeholder = 'Output label';
-    labelInput.value = oc.label || '';
-    labelInput.addEventListener('input', () => {
-      oc.label = labelInput.value.trim();
-      name.textContent = oc.label || `Virtual output ${i + 1}`;
-      push();
-    });
-    ctl.appendChild(labelInput);
-
-    const showLab = document.createElement('label');
-    showLab.className = 'check-inline';
-    const showChk = document.createElement('input');
-    showChk.type = 'checkbox';
-    showChk.checked = !!oc.showLabel;
-    showChk.addEventListener('change', () => { oc.showLabel = showChk.checked; push(); });
-    showLab.append(showChk, document.createTextNode(' overlay'));
-    ctl.appendChild(showLab);
-
-    const modeSel = document.createElement('select');
-    for (const [val, label] of [['fit', 'Fit'], ['fill', 'Fill'], ['stretch', 'Stretch'], ['1to1', '1:1 pixel']]) {
-      const opt = document.createElement('option');
-      opt.value = val; opt.textContent = label;
-      modeSel.appendChild(opt);
-    }
-    modeSel.value = oc.mode;
-    modeSel.addEventListener('change', () => { oc.mode = modeSel.value; renderDisplays(); push(); });
-    ctl.appendChild(modeSel);
-
-    if (oc.mode === '1to1') {
-      for (const key of ['offsetX', 'offsetY']) {
-        const lab = document.createElement('label');
-        lab.textContent = key === 'offsetX' ? 'X' : 'Y';
-        const inp = document.createElement('input');
-        inp.type = 'number'; inp.min = '0'; inp.step = '1'; inp.value = oc[key];
-        inp.addEventListener('change', () => { oc[key] = Math.max(0, inp.value | 0); push(); });
-        lab.appendChild(inp);
-        ctl.appendChild(lab);
-      }
-    }
-
-    const btn = document.createElement('button');
-    btn.className = active ? 'btn danger' : 'btn primary';
-    btn.textContent = active ? 'Stop' : 'Start Output';
-    btn.addEventListener('click', () => {
-      if (active) window.ledwall.stopOutput(v.id);
-      else window.ledwall.startOutput(v.id, { width: v.width, height: v.height, label: oc.label });
-    });
-    ctl.appendChild(btn);
+    appendOutputControls(ctl, v.id, oc, active,
+      () => window.ledwall.startOutput(v.id, { width: v.width, height: v.height, label: oc.label }),
+      name);
 
     const rm = document.createElement('button');
     rm.className = 'btn remove';
@@ -395,7 +497,6 @@ function renderVirtuals() {
   });
 }
 
-let vSeq = 0;
 function addVirtualOutput() {
   const width = Math.max(16, $('#vW').value | 0);
   const height = Math.max(16, $('#vH').value | 0);
@@ -409,89 +510,147 @@ function addVirtualOutput() {
 // ---------- export ----------
 
 function exportWallPNG() {
-  resolveWall();
+  const w = curWall();
+  resolveWall(w);
   const c = document.createElement('canvas');
-  c.width = cfg.wall.width;
-  c.height = cfg.wall.height;
-  window.LED_RENDER_FRAME(c.getContext('2d'), cfg, performance.now());
+  c.width = w.width;
+  c.height = w.height;
+  window.LED_RENDER_FRAME(c.getContext('2d'), { wall: w, pattern: cfg.pattern, overlay: cfg.overlay }, performance.now());
   const a = document.createElement('a');
-  a.download = `lattice-${cfg.pattern.type}-${cfg.wall.width}x${cfg.wall.height}.png`;
+  const safeName = (w.name || 'wall').replace(/[^\w-]+/g, '_');
+  a.download = `lattice-${safeName}-${cfg.pattern.type}-${w.width}x${w.height}.png`;
   a.href = c.toDataURL('image/png');
   a.click();
 }
 
-// ---------- input wiring ----------
+// ---------- auto-update toast ----------
 
-function bindNumber(id, obj, key, after) {
-  const el = $(id);
-  el.value = obj[key];
-  el.addEventListener('change', () => {
-    obj[key] = Math.max(parseInt(el.min, 10) || 1, el.value | 0);
-    el.value = obj[key];
-    if (after) after();
-    push();
-  });
+function updateBar() {
+  let el = document.getElementById('updateBar');
+  if (!el) {
+    el = document.createElement('div');
+    el.id = 'updateBar';
+    el.innerHTML = '<span class="msg"></span>';
+    document.body.appendChild(el);
+  }
+  return el;
 }
 
+function showUpdate(msg, withRestart) {
+  const el = updateBar();
+  el.querySelector('.msg').textContent = msg;
+  let btn = el.querySelector('button');
+  if (withRestart && !btn) {
+    btn = document.createElement('button');
+    btn.className = 'btn primary';
+    btn.textContent = 'Restart & Update';
+    btn.addEventListener('click', () => window.ledwall.installUpdate());
+    el.appendChild(btn);
+  }
+  el.style.display = 'flex';
+}
+
+function wireUpdates() {
+  window.ledwall.onUpdateAvailable(({ version }) => showUpdate(`Update v${version} available — downloading…`, false));
+  window.ledwall.onUpdateProgress(({ percent }) => showUpdate(`Downloading update… ${percent}%`, false));
+  window.ledwall.onUpdateDownloaded(({ version, manualOnly }) => showUpdate(
+    manualOnly ? `Update v${version} ready —` : `v${version} downloaded — installs on quit, or`, true));
+}
+
+// ---------- wall setup input wiring (all bound to the SELECTED wall) ----------
+
 function syncWallModeUI() {
-  $('#uniformRows').style.display = cfg.wall.mode === 'manual' ? 'none' : '';
-  $('#manualRows').style.display = cfg.wall.mode === 'manual' ? '' : 'none';
-  $('#mmRows').style.display = cfg.wall.defineBy === 'mm' ? '' : 'none';
-  $('#pxRows').style.display = cfg.wall.defineBy === 'px' ? '' : 'none';
+  const w = curWall();
+  $('#uniformRows').style.display = w.mode === 'manual' ? 'none' : '';
+  $('#manualRows').style.display = w.mode === 'manual' ? '' : 'none';
+  $('#mmRows').style.display = w.defineBy === 'mm' ? '' : 'none';
+  $('#pxRows').style.display = w.defineBy === 'px' ? '' : 'none';
+}
+
+// refresh every wall-setup input from the selected wall (after selection change)
+function syncWallInputs() {
+  const w = curWall();
+  $('#wallName').value = w.name;
+  $('#wallMode').value = w.mode;
+  $('#defineBy').value = w.defineBy;
+  $('#mmW').value = w.mmW;
+  $('#mmH').value = w.mmH;
+  $('#pitch').value = w.pitch;
+  $('#panelW').value = w.panelW;
+  $('#panelH').value = w.panelH;
+  $('#panelsX').value = w.panelsX;
+  $('#panelsY').value = w.panelsY;
+  $('#colWidths').value = w.colWidths.join(', ');
+  $('#rowHeights').value = w.rowHeights.join(', ');
+  $('#customRes').checked = w.custom;
+  $('#customResRow').style.display = w.custom ? '' : 'none';
+  $('#wallW').value = w.width;
+  $('#wallH').value = w.height;
+  syncWallModeUI();
+}
+
+function bindWallNumber(sel, key) {
+  const el = $(sel);
+  el.addEventListener('change', () => {
+    const w = curWall();
+    w[key] = Math.max(parseInt(el.min, 10) || 1, el.value | 0);
+    el.value = w[key];
+    push();
+  });
 }
 
 function wireInputs() {
-  bindNumber('#panelW', cfg.wall, 'panelW');
-  bindNumber('#panelH', cfg.wall, 'panelH');
-  bindNumber('#panelsX', cfg.wall, 'panelsX');
-  bindNumber('#panelsY', cfg.wall, 'panelsY');
-  bindNumber('#wallW', cfg.wall, 'width');
-  bindNumber('#wallH', cfg.wall, 'height');
+  $('#wallName').addEventListener('input', () => {
+    curWall().name = $('#wallName').value.trim() || curWall().name;
+    push();
+    renderDisplays(); // wall dropdowns show names
+  });
 
-  const wallMode = $('#wallMode');
-  wallMode.value = cfg.wall.mode;
-  wallMode.addEventListener('change', () => {
-    cfg.wall.mode = wallMode.value;
+  bindWallNumber('#panelW', 'panelW');
+  bindWallNumber('#panelH', 'panelH');
+  bindWallNumber('#panelsX', 'panelsX');
+  bindWallNumber('#panelsY', 'panelsY');
+  bindWallNumber('#wallW', 'width');
+  bindWallNumber('#wallH', 'height');
+  bindWallNumber('#mmW', 'mmW');
+  bindWallNumber('#mmH', 'mmH');
+
+  $('#wallMode').addEventListener('change', () => {
+    curWall().mode = $('#wallMode').value;
     syncWallModeUI();
     push();
   });
 
-  const defineBy = $('#defineBy');
-  defineBy.value = cfg.wall.defineBy;
-  defineBy.addEventListener('change', () => {
-    cfg.wall.defineBy = defineBy.value;
+  $('#defineBy').addEventListener('change', () => {
+    curWall().defineBy = $('#defineBy').value;
     syncWallModeUI();
     push();
   });
-
-  bindNumber('#mmW', cfg.wall, 'mmW');
-  bindNumber('#mmH', cfg.wall, 'mmH');
 
   const pitch = $('#pitch');
-  pitch.value = cfg.wall.pitch;
   pitch.addEventListener('change', () => {
-    cfg.wall.pitch = Math.min(50, Math.max(0.4, parseFloat(pitch.value) || 2.9));
-    pitch.value = cfg.wall.pitch;
+    const w = curWall();
+    w.pitch = Math.min(50, Math.max(0.4, parseFloat(pitch.value) || 2.9));
+    pitch.value = w.pitch;
     push();
   });
-
-  syncWallModeUI();
 
   document.querySelectorAll('.preset-chips .chip').forEach((chip) => {
     chip.addEventListener('click', () => {
+      const w = curWall();
       if (chip.dataset.pitch) {
-        cfg.wall.pitch = parseFloat(chip.dataset.pitch);
-        $('#pitch').value = cfg.wall.pitch;
+        w.pitch = parseFloat(chip.dataset.pitch);
+        $('#pitch').value = w.pitch;
       } else if (chip.dataset.mmw) {
-        cfg.wall.mmW = chip.dataset.mmw | 0;
-        cfg.wall.mmH = chip.dataset.mmh | 0;
-        $('#mmW').value = cfg.wall.mmW;
-        $('#mmH').value = cfg.wall.mmH;
+        w.mmW = chip.dataset.mmw | 0;
+        w.mmH = chip.dataset.mmh | 0;
+        $('#mmW').value = w.mmW;
+        $('#mmH').value = w.mmH;
       } else {
-        cfg.wall.panelW = chip.dataset.pw | 0;
-        cfg.wall.panelH = chip.dataset.ph | 0;
-        $('#panelW').value = cfg.wall.panelW;
-        $('#panelH').value = cfg.wall.panelH;
+        w.panelW = chip.dataset.pw | 0;
+        w.panelH = chip.dataset.ph | 0;
+        $('#panelW').value = w.panelW;
+        $('#panelH').value = w.panelH;
       }
       push();
     });
@@ -499,20 +658,19 @@ function wireInputs() {
 
   for (const [id, key] of [['#colWidths', 'colWidths'], ['#rowHeights', 'rowHeights']]) {
     const el = $(id);
-    el.value = cfg.wall[key].join(', ');
     el.addEventListener('change', () => {
-      cfg.wall[key] = parsePxList(el.value, DEFAULTS.wall[key]);
-      el.value = cfg.wall[key].join(', ');
+      const w = curWall();
+      w[key] = parsePxList(el.value, WALL_DEFAULTS[key]);
+      el.value = w[key].join(', ');
       push();
     });
   }
 
   const customRes = $('#customRes');
-  customRes.checked = cfg.wall.custom;
-  $('#customResRow').style.display = cfg.wall.custom ? '' : 'none';
   customRes.addEventListener('change', () => {
-    cfg.wall.custom = customRes.checked;
-    $('#customResRow').style.display = cfg.wall.custom ? '' : 'none';
+    const w = curWall();
+    w.custom = customRes.checked;
+    $('#customResRow').style.display = w.custom ? '' : 'none';
     push();
   });
 
@@ -575,40 +733,7 @@ function wireInputs() {
   $('#stopAllBtn').addEventListener('click', () => window.ledwall.stopAll());
   $('#exportBtn').addEventListener('click', exportWallPNG);
   $('#addVirtualBtn').addEventListener('click', addVirtualOutput);
-}
-
-// ---------- auto-update toast ----------
-
-function updateBar() {
-  let el = document.getElementById('updateBar');
-  if (!el) {
-    el = document.createElement('div');
-    el.id = 'updateBar';
-    el.innerHTML = '<span class="msg"></span>';
-    document.body.appendChild(el);
-  }
-  return el;
-}
-
-function showUpdate(msg, withRestart) {
-  const el = updateBar();
-  el.querySelector('.msg').textContent = msg;
-  let btn = el.querySelector('button');
-  if (withRestart && !btn) {
-    btn = document.createElement('button');
-    btn.className = 'btn primary';
-    btn.textContent = 'Restart & Update';
-    btn.addEventListener('click', () => window.ledwall.installUpdate());
-    el.appendChild(btn);
-  }
-  el.style.display = 'flex';
-}
-
-function wireUpdates() {
-  window.ledwall.onUpdateAvailable(({ version }) => showUpdate(`Update v${version} available — downloading…`, false));
-  window.ledwall.onUpdateProgress(({ percent }) => showUpdate(`Downloading update… ${percent}%`, false));
-  window.ledwall.onUpdateDownloaded(({ version, manualOnly }) => showUpdate(
-    manualOnly ? `Update v${version} ready —` : `v${version} downloaded — installs on quit, or`, true));
+  $('#addWallBtn').addEventListener('click', addWall);
 }
 
 // ---------- init ----------
@@ -619,6 +744,7 @@ async function init() {
   buildOverlayButtons();
   wireInputs();
   wireUpdates();
+  syncWallInputs();
   syncPatternUI();
   syncOverlayUI();
 

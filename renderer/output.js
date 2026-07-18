@@ -21,7 +21,17 @@ function myOutputCfg() {
     offsetY: o.offsetY | 0,
     label: o.label || '',
     showLabel: !!o.showLabel,
+    wallId: o.wallId,
   };
+}
+
+// The wall this output is assigned to (falls back to the first wall)
+function myWall() {
+  if (cfg && cfg.walls && cfg.walls.length) {
+    const { wallId } = myOutputCfg();
+    return cfg.walls.find((w) => w.id === wallId) || cfg.walls[0];
+  }
+  return cfg && cfg.wall; // legacy single-wall configs
 }
 
 function updateLabelOverlay() {
@@ -46,8 +56,9 @@ function sizeView() {
 }
 
 function ensureWall() {
-  const w = Math.max(1, cfg.wall.width | 0);
-  const h = Math.max(1, cfg.wall.height | 0);
+  const wc = myWall();
+  const w = Math.max(1, wc.width | 0);
+  const h = Math.max(1, wc.height | 0);
   if (wall.width !== w) wall.width = w;
   if (wall.height !== h) wall.height = h;
 }
@@ -115,7 +126,7 @@ function blitTo(vctx, W, H) {
 }
 
 function renderFrame(t) {
-  window.LED_RENDER_FRAME(wctx, cfg, t);
+  window.LED_RENDER_FRAME(wctx, { wall: myWall(), pattern: cfg.pattern, overlay: cfg.overlay }, t);
   blit();
 }
 
@@ -137,8 +148,9 @@ function showInfo() {
   const res = me.virtual
     ? `virtual ${me.vWidth} x ${me.vHeight} px`
     : `${Math.round(window.innerWidth * dpr)} x ${Math.round(window.innerHeight * dpr)} px`;
+  const wc = myWall();
   infoEl.textContent =
-    `Output ${me.index}: ${me.label} — ${res} | wall ${cfg.wall.width} x ${cfg.wall.height} | ESC closes this output`;
+    `Output ${me.index}: ${me.label} — ${res} | ${wc.name || 'wall'} ${wc.width} x ${wc.height} | ESC closes this output`;
   infoEl.classList.remove('hidden');
   setTimeout(() => infoEl.classList.add('hidden'), 4000);
 }

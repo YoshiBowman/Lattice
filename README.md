@@ -44,6 +44,11 @@ git tag v<version> && git push origin main --tags
 
 ## What it does
 
+- **Multiple walls** — build every wall in the show as its own entry (name, size, panel
+  layout, orientation): 11 walls of 11 different shapes is a normal day. Select a wall to
+  edit it, duplicate for variants, assign any wall to any output, and click **Window** on a
+  wall to open it in a virtual output at native resolution — the whole show can be
+  pre-vis'd and mapped before a single processor is connected.
 - **Wall setup** — define panels the way spec sheets do: **physical size (mm) + pixel
   pitch** (e.g. 500×500 mm @ 2.9 → 172×172 px per panel, with 500×500 / 500×1000 mm and
   P1.9–P5.2 quick presets), or enter pixels directly. Set panel count and the wall canvas

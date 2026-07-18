@@ -18,7 +18,17 @@
   <main>
     <aside id="controls">
       <section class="card">
+        <h2>Walls</h2>
+        <div id="wallList"></div>
+        <button id="addWallBtn" class="btn">+ Add Wall</button>
+        <div class="hint">Each wall has its own size, panel layout and orientation. Select one to edit
+          it below; assign walls to outputs in the Outputs panel. “Window” opens the wall in a virtual
+          output for pre-vis.</div>
+      </section>
+
+      <section class="card">
         <h2>Wall Setup</h2>
+        <label>Wall name<input type="text" id="wallName" spellcheck="false" placeholder="e.g. US Center Portrait"></label>
         <label>Panel layout
           <select id="wallMode">
             <option value="uniform">Uniform panels</option>
