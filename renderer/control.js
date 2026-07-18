@@ -21,7 +21,8 @@ const DEFAULTS = {
   selectedWall: 'w1',
   pattern: { type: 'grid', fg: '#ffffff', bg: '#000000', size: 16, speed: 2, gradMode: 'gray-h', dir: 'h' },
   overlay: { type: 'none', color: '#3fb950', opacity: 70, speed: 1, dir: 'h' },
-  outputs: {}, // displayId | virtual id -> { mode, offsetX, offsetY, label, showLabel, wallId }
+  readout: { label: true, dims: false }, // center label / wall name + dimensions line
+  outputs: {}, // displayId | virtual id -> { mode, offsetX, offsetY, label, wallId }
   virtualOutputs: [], // [{ id: 'v...', width, height }]
 };
 
@@ -51,6 +52,7 @@ function loadConfig() {
         selectedWall: walls.some((w) => w.id === saved.selectedWall) ? saved.selectedWall : walls[0].id,
         pattern: { ...DEFAULTS.pattern, ...saved.pattern },
         overlay: { ...DEFAULTS.overlay, ...saved.overlay },
+        readout: { ...DEFAULTS.readout, ...saved.readout },
         outputs: saved.outputs || {},
         virtualOutputs: saved.virtualOutputs || [],
       };
@@ -294,7 +296,9 @@ function scaledCfgFor(w, s) {
       custom: true,
       width: Math.max(1, Math.round(w.width * s)),
       height: Math.max(1, Math.round(w.height * s)),
-      pxLabelScale: 1 / s, // panelmap shows true panel px, not scaled
+      pxLabelScale: 1 / s, // panelmap/readout show true px, not scaled
+      origMode: w.mode,
+      origDefineBy: w.defineBy,
     },
     pattern: { ...cfg.pattern, size: Math.max(1, Math.round((cfg.pattern.size || 16) * s)) },
     overlay: cfg.overlay,
@@ -308,6 +312,7 @@ function drawPreviewFrame(t) {
   const boxH = 300;
   const s = Math.min(boxW / w.width, boxH / w.height, 1);
   const pcfg = s < 1 ? scaledCfgFor(w, s) : { wall: w, pattern: cfg.pattern, overlay: cfg.overlay };
+  pcfg.readout = cfg.readout;
   if (preview.width !== pcfg.wall.width) preview.width = pcfg.wall.width;
   if (preview.height !== pcfg.wall.height) preview.height = pcfg.wall.height;
   window.LED_RENDER_FRAME(previewCtx, pcfg, t);
@@ -326,7 +331,7 @@ function startPreview() {
 // ---------- outputs ----------
 
 function outCfgFor(id) {
-  if (!cfg.outputs[id]) cfg.outputs[id] = { mode: 'fit', offsetX: 0, offsetY: 0, label: '', showLabel: false, wallId: cfg.walls[0].id };
+  if (!cfg.outputs[id]) cfg.outputs[id] = { mode: 'fit', offsetX: 0, offsetY: 0, label: '', wallId: cfg.walls[0].id };
   return cfg.outputs[id];
 }
 
@@ -357,15 +362,6 @@ function appendOutputControls(ctl, key, oc, active, startFn, nameEl) {
     push();
   });
   ctl.appendChild(labelInput);
-
-  const showLab = document.createElement('label');
-  showLab.className = 'check-inline';
-  const showChk = document.createElement('input');
-  showChk.type = 'checkbox';
-  showChk.checked = !!oc.showLabel;
-  showChk.addEventListener('change', () => { oc.showLabel = showChk.checked; push(); });
-  showLab.append(showChk, document.createTextNode(' overlay'));
-  ctl.appendChild(showLab);
 
   ctl.appendChild(wallSelectFor(oc));
 
@@ -515,7 +511,7 @@ function exportWallPNG() {
   const c = document.createElement('canvas');
   c.width = w.width;
   c.height = w.height;
-  window.LED_RENDER_FRAME(c.getContext('2d'), { wall: w, pattern: cfg.pattern, overlay: cfg.overlay }, performance.now());
+  window.LED_RENDER_FRAME(c.getContext('2d'), { wall: w, pattern: cfg.pattern, overlay: cfg.overlay, readout: cfg.readout }, performance.now());
   const a = document.createElement('a');
   const safeName = (w.name || 'wall').replace(/[^\w-]+/g, '_');
   a.download = `lattice-${safeName}-${cfg.pattern.type}-${w.width}x${w.height}.png`;
@@ -728,6 +724,15 @@ function wireInputs() {
   const ovDir = $('#ovDir');
   ovDir.value = cfg.overlay.dir;
   ovDir.addEventListener('change', () => { cfg.overlay.dir = ovDir.value; push(); });
+
+  // center readout toggles
+  const roLabel = $('#roLabel');
+  roLabel.checked = cfg.readout.label !== false;
+  roLabel.addEventListener('change', () => { cfg.readout.label = roLabel.checked; push(); });
+
+  const roDims = $('#roDims');
+  roDims.checked = !!cfg.readout.dims;
+  roDims.addEventListener('change', () => { cfg.readout.dims = roDims.checked; push(); });
 
   $('#identifyBtn').addEventListener('click', () => window.ledwall.identify());
   $('#stopAllBtn').addEventListener('click', () => window.ledwall.stopAll());

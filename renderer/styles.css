@@ -160,6 +160,8 @@ input[type="text"] {
 .btn.danger:hover { background: rgba(229,83,75,0.12); }
 
 .hint { color: var(--muted); font-size: 12px; margin-top: 6px; }
+.readout-row { display: flex; gap: 16px; margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--border); }
+.readout-row .check { margin: 0; }
 
 #updateBar {
   position: fixed; left: 50%; bottom: 14px; transform: translateX(-50%);

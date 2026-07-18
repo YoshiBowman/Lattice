@@ -35,14 +35,9 @@ function myWall() {
 }
 
 function updateLabelOverlay() {
+  // label now renders into the frame itself (center readout); here we only
+  // keep the virtual window title in sync
   const oc = myOutputCfg();
-  const el = document.getElementById('outLabel');
-  if (oc.showLabel && oc.label) {
-    el.textContent = oc.label;
-    el.style.display = 'block';
-  } else {
-    el.style.display = 'none';
-  }
   if (me && me.virtual) {
     window.ledwall.setOutputTitle(me.id,
       `Lattice — ${oc.label || me.label} (${me.vWidth}×${me.vHeight})`);
@@ -126,7 +121,14 @@ function blitTo(vctx, W, H) {
 }
 
 function renderFrame(t) {
-  window.LED_RENDER_FRAME(wctx, { wall: myWall(), pattern: cfg.pattern, overlay: cfg.overlay }, t);
+  const oc = myOutputCfg();
+  window.LED_RENDER_FRAME(wctx, {
+    wall: myWall(),
+    pattern: cfg.pattern,
+    overlay: cfg.overlay,
+    readout: cfg.readout,
+    centerLabel: oc.label,
+  }, t);
   blit();
 }
 

@@ -522,7 +522,70 @@
     },
   };
 
-  // Single entry point: base pattern, then overlay pulse composited on top.
+  // Center readout: label / wall name and optional dimensions line, rendered
+  // INTO the frame so it shows identically on outputs, the preview and exports.
+  function dimsText(w) {
+    const g = wallGrid(w);
+    const ls = w.pxLabelScale || 1; // preview renders scaled — show true px
+    let t = `${Math.round(w.width * ls)} × ${Math.round(w.height * ls)} px · ${g.cols} × ${g.rows} panels`;
+    // origMode/origDefineBy: the preview renders a scaled manual-grid copy of
+    // the wall — the readout must still reflect the real wall's definition
+    const mode = w.origMode || w.mode;
+    const defineBy = w.origDefineBy || w.defineBy;
+    if (mode !== 'manual' && defineBy === 'mm') {
+      t += ` · ${((w.panelsX * w.mmW) / 1000).toFixed(2)} × ${((w.panelsY * w.mmH) / 1000).toFixed(2)} m`;
+    }
+    return t;
+  }
+
+  function drawCenterReadout(ctx, cfg) {
+    const w = cfg.wall;
+    const readout = cfg.readout || {};
+    const lines = [];
+    if (readout.label !== false) {
+      const label = cfg.centerLabel || w.name;
+      if (label) lines.push({ text: String(label), big: true });
+    }
+    if (readout.dims) lines.push({ text: dimsText(w), big: false });
+    if (!lines.length) return;
+
+    const big = Math.max(9, Math.min(w.width, w.height) * 0.11);
+    const small = big * 0.42;
+    ctx.save();
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    // fit each line to 90% of wall width independently — a long dimensions
+    // line must not shrink the big label
+    let maxW = 0;
+    for (const l of lines) {
+      const base = l.big ? big : small;
+      ctx.font = `bold ${base}px Menlo, monospace`;
+      const tw = ctx.measureText(l.text).width;
+      l.size = base * Math.min(1, (w.width * 0.9) / Math.max(1, tw));
+      maxW = Math.max(maxW, Math.min(tw, w.width * 0.9));
+    }
+    const heights = lines.map((l) => l.size * 1.35);
+    const totalH = heights.reduce((a, b) => a + b, 0);
+    const padX = big * 0.6, padY = big * 0.4;
+    const cx = w.width / 2, cy = w.height / 2;
+
+    ctx.fillStyle = 'rgba(0,0,0,0.55)';
+    ctx.beginPath();
+    ctx.roundRect(cx - maxW / 2 - padX, cy - totalH / 2 - padY, maxW + padX * 2, totalH + padY * 2, Math.max(3, big * 0.25));
+    ctx.fill();
+
+    ctx.fillStyle = '#ffffff';
+    let y = cy - totalH / 2;
+    for (let i = 0; i < lines.length; i++) {
+      const l = lines[i];
+      ctx.font = `bold ${l.size}px Menlo, monospace`;
+      ctx.fillText(l.text, cx, y + heights[i] / 2);
+      y += heights[i];
+    }
+    ctx.restore();
+  }
+
+  // Single entry point: base pattern, overlay pulse, then center readout.
   function renderFrame(ctx, cfg, t) {
     const pat = PATTERNS[cfg.pattern.type] || PATTERNS.grid;
     pat.draw(ctx, cfg, t);
@@ -534,6 +597,7 @@
       ov.draw(ctx, cfg, t);
       ctx.restore();
     }
+    drawCenterReadout(ctx, cfg);
   }
 
   function frameAnimated(cfg) {
