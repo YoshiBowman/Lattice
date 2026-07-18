@@ -34,6 +34,8 @@ let vSeq = 0;
 
 const preview = $('#preview');
 const previewCtx = preview.getContext('2d');
+const renderPreviewFrame = window.LED_CREATE_FRAME_RENDERER();
+let previewBoxW = 0; // cached; reading clientWidth every frame forces reflow
 
 function loadConfig() {
   try {
@@ -89,7 +91,13 @@ function parsePxList(raw, fallback) {
 
 function push() {
   resolveWalls();
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(cfg));
+  // Never let persistence kill the live pipeline: the logo data URL stays out
+  // of localStorage (quota!), and a failed save must not block setConfig.
+  try {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify({ ...cfg, readout: { ...cfg.readout, image: cfg.readout.image ? true : null } }));
+  } catch (err) {
+    console.error('[config] save failed:', err.message);
+  }
   window.ledwall.setConfig(cfg);
   updateSummary();
   renderWalls();
@@ -308,17 +316,18 @@ function scaledCfgFor(w, s) {
 function drawPreviewFrame(t) {
   const w = curWall();
   resolveWall(w);
-  const boxW = Math.max(100, $('#previewBox').clientWidth - 16);
+  const boxW = previewBoxW || Math.max(100, $('#previewBox').clientWidth - 16);
   const boxH = 300;
   const s = Math.min(boxW / w.width, boxH / w.height, 1);
   const pcfg = s < 1 ? scaledCfgFor(w, s) : { wall: w, pattern: cfg.pattern, overlay: cfg.overlay };
   pcfg.readout = cfg.readout;
   if (preview.width !== pcfg.wall.width) preview.width = pcfg.wall.width;
   if (preview.height !== pcfg.wall.height) preview.height = pcfg.wall.height;
-  window.LED_RENDER_FRAME(previewCtx, pcfg, t);
+  renderPreviewFrame(previewCtx, pcfg, t);
 }
 
 function startPreview() {
+  previewBoxW = Math.max(100, $('#previewBox').clientWidth - 16);
   if (previewRaf !== null) { cancelAnimationFrame(previewRaf); previewRaf = null; }
   if (window.LED_FRAME_ANIMATED(cfg)) {
     const loop = (t) => { drawPreviewFrame(t); previewRaf = requestAnimationFrame(loop); };
@@ -775,6 +784,7 @@ function wireInputs() {
     const reader = new FileReader();
     reader.onload = () => {
       cfg.readout.image = reader.result;
+      window.ledwall.saveLogo(reader.result); // persisted on disk, not localStorage
       roImageClear.style.display = '';
       push();
     };
@@ -782,6 +792,7 @@ function wireInputs() {
   });
   roImageClear.addEventListener('click', () => {
     cfg.readout.image = null;
+    window.ledwall.saveLogo(null);
     roImage.value = '';
     roImageClear.style.display = 'none';
     push();
@@ -798,6 +809,15 @@ function wireInputs() {
 
 async function init() {
   $('#version').textContent = 'v' + (await window.ledwall.getVersion());
+
+  // logo lives on disk; older configs stored the data URL in localStorage —
+  // migrate it over once, then only a boolean marker remains in the config
+  const diskLogo = await window.ledwall.loadLogo();
+  if (diskLogo) cfg.readout.image = diskLogo;
+  else if (cfg.readout.image && typeof cfg.readout.image === 'string') window.ledwall.saveLogo(cfg.readout.image);
+  else cfg.readout.image = null;
+  $('#roImageClear').style.display = cfg.readout.image ? '' : 'none';
+
   buildPatternButtons();
   buildOverlayButtons();
   wireInputs();

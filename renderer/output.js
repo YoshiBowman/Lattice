@@ -121,9 +121,11 @@ function blitTo(vctx, W, H) {
   vctx.drawImage(wall, dx + posX, dy + posY, dw, dh);
 }
 
+const renderWallFrame = window.LED_CREATE_FRAME_RENDERER();
+
 function renderFrame(t) {
   const oc = myOutputCfg();
-  window.LED_RENDER_FRAME(wctx, {
+  renderWallFrame(wctx, {
     wall: myWall(),
     pattern: cfg.pattern,
     overlay: cfg.overlay,

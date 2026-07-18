@@ -626,10 +626,7 @@
     ctx.restore();
   }
 
-  // Single entry point: base pattern, overlay pulse, then center readout.
-  function renderFrame(ctx, cfg, t) {
-    const pat = PATTERNS[cfg.pattern.type] || PATTERNS.grid;
-    pat.draw(ctx, cfg, t);
+  function drawDynamicLayers(ctx, cfg, t) {
     const ovCfg = cfg.overlay;
     const ov = ovCfg && OVERLAYS[ovCfg.type];
     if (ov && ov.draw) {
@@ -641,12 +638,46 @@
     drawCenterReadout(ctx, cfg);
   }
 
+  // Single entry point: base pattern, overlay pulse, then center readout.
+  function renderFrame(ctx, cfg, t) {
+    const pat = PATTERNS[cfg.pattern.type] || PATTERNS.grid;
+    pat.draw(ctx, cfg, t);
+    drawDynamicLayers(ctx, cfg, t);
+  }
+
+  // Cached renderer for continuous animation loops: static base patterns are
+  // drawn once into an offscreen canvas and blitted per frame, so an animated
+  // overlay only pays for its own moving parts (panel-map text etc. is heavy).
+  function createFrameRenderer() {
+    const base = document.createElement('canvas');
+    const bctx = base.getContext('2d');
+    let baseKey = '';
+    return function render(ctx, cfg, t) {
+      const w = cfg.wall;
+      const pat = PATTERNS[cfg.pattern.type] || PATTERNS.grid;
+      if (pat.animated) {
+        pat.draw(ctx, cfg, t);
+      } else {
+        const key = JSON.stringify([w, cfg.pattern]);
+        if (base.width !== w.width) { base.width = w.width; baseKey = ''; }
+        if (base.height !== w.height) { base.height = w.height; baseKey = ''; }
+        if (key !== baseKey) {
+          pat.draw(bctx, cfg, t);
+          baseKey = key;
+        }
+        ctx.drawImage(base, 0, 0);
+      }
+      drawDynamicLayers(ctx, cfg, t);
+    };
+  }
+
   function frameAnimated(cfg) {
     if (PATTERNS[cfg.pattern.type] && PATTERNS[cfg.pattern.type].animated) return true;
     return !!(cfg.overlay && cfg.overlay.type && cfg.overlay.type !== 'none');
   }
 
   window.LED_PATTERNS = PATTERNS;
+  window.LED_CREATE_FRAME_RENDERER = createFrameRenderer;
   window.LED_ON_IMAGE_READY = (cb) => _imgCbs.push(cb);
   window.LED_PATTERN_IS_ANIMATED = (type) => !!(PATTERNS[type] && PATTERNS[type].animated);
   window.LED_OVERLAYS = OVERLAYS;

@@ -290,6 +290,29 @@ ipcMain.handle('nudge-output', (e, displayId, dx, dy) => {
   notifyControl('nudge-output', { id: displayId, dx: dx | 0, dy: dy | 0 });
 });
 
+// Readout logo is persisted on disk, NOT in localStorage — a multi-MB data
+// URL blows the ~5MB localStorage quota and the resulting setItem exception
+// used to kill config pushes entirely (outputs stopped responding).
+const logoPath = () => path.join(app.getPath('userData'), 'readout-logo.dat');
+
+ipcMain.handle('save-logo', (e, dataUrl) => {
+  try {
+    if (dataUrl && typeof dataUrl === 'string') fs.writeFileSync(logoPath(), dataUrl, 'utf8');
+    else fs.rmSync(logoPath(), { force: true });
+    return { ok: true };
+  } catch (err) {
+    return { ok: false, error: err.message };
+  }
+});
+
+ipcMain.handle('load-logo', () => {
+  try {
+    return fs.existsSync(logoPath()) ? fs.readFileSync(logoPath(), 'utf8') : null;
+  } catch (err) {
+    return null;
+  }
+});
+
 ipcMain.handle('stop-output', (e, displayId) => {
   const win = outputWins.get(displayId);
   if (win && !win.isDestroyed()) win.close();
