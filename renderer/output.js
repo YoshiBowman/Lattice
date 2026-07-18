@@ -33,6 +33,10 @@ function updateLabelOverlay() {
   } else {
     el.style.display = 'none';
   }
+  if (me && me.virtual) {
+    window.ledwall.setOutputTitle(me.id,
+      `Lattice — ${oc.label || me.label} (${me.vWidth}×${me.vHeight})`);
+  }
 }
 
 function sizeView() {
@@ -50,8 +54,34 @@ function ensureWall() {
 
 const isIntegerScale = (s) => Math.abs(s - Math.round(s)) < 1e-6 && Math.round(s) >= 1;
 
+// Virtual outputs composite at their declared resolution, then scale to the window
+const virt = document.createElement('canvas');
+const virtCtx = virt.getContext('2d');
+
 function blit() {
-  const W = view.width, H = view.height;
+  const isVirtual = !!(me && me.virtual);
+  let tctx, W, H;
+  if (isVirtual) {
+    if (virt.width !== me.vWidth) virt.width = me.vWidth;
+    if (virt.height !== me.vHeight) virt.height = me.vHeight;
+    tctx = virtCtx; W = virt.width; H = virt.height;
+  } else {
+    tctx = vctx; W = view.width; H = view.height;
+  }
+  blitTo(tctx, W, H);
+  if (isVirtual) {
+    // present the virtual frame in the window, letterboxed, smooth
+    vctx.fillStyle = '#000000';
+    vctx.fillRect(0, 0, view.width, view.height);
+    const s = Math.min(view.width / virt.width, view.height / virt.height);
+    const dw = virt.width * s, dh = virt.height * s;
+    vctx.imageSmoothingEnabled = !(isIntegerScale(s));
+    vctx.imageSmoothingQuality = 'high';
+    vctx.drawImage(virt, (view.width - dw) / 2, (view.height - dh) / 2, dw, dh);
+  }
+}
+
+function blitTo(vctx, W, H) {
   const w = wall.width, h = wall.height;
   vctx.fillStyle = '#000000';
   vctx.fillRect(0, 0, W, H);
@@ -104,9 +134,11 @@ function apply() {
 
 function showInfo() {
   const dpr = window.devicePixelRatio || 1;
+  const res = me.virtual
+    ? `virtual ${me.vWidth} x ${me.vHeight} px`
+    : `${Math.round(window.innerWidth * dpr)} x ${Math.round(window.innerHeight * dpr)} px`;
   infoEl.textContent =
-    `Output ${me.index}: ${me.label} — ${Math.round(window.innerWidth * dpr)} x ${Math.round(window.innerHeight * dpr)} px` +
-    ` | wall ${cfg.wall.width} x ${cfg.wall.height} | ESC closes this output`;
+    `Output ${me.index}: ${me.label} — ${res} | wall ${cfg.wall.width} x ${cfg.wall.height} | ESC closes this output`;
   infoEl.classList.remove('hidden');
   setTimeout(() => infoEl.classList.add('hidden'), 4000);
 }
@@ -129,6 +161,7 @@ async function init() {
   window.addEventListener('keydown', (e) => {
     if (e.key === 'Escape') window.ledwall.closeSelf();
   });
+  if (me && me.virtual) document.body.style.cursor = 'default'; // windowed — keep the cursor
 
   if (cfg) { apply(); showInfo(); }
 }

@@ -62,7 +62,14 @@ git tag v<version> && git push origin main --tags
   pitch), Pixel Walk, Color Cycle, Motion Test (judder/latency, frame counter).
   Foreground/background colors, size/spacing, speed, and direction adjustable per pattern.
 - **Output labels** — name each output (e.g. "STAGE LEFT WALL") and toggle a big on-screen
-  overlay so you always know which feed you're looking at; labels also show in Identify.
+  overlay so you always know which feed you're looking at; labels apply live as you type
+  and also show in Identify and virtual-output window titles.
+- **Virtual outputs** — add windowed outputs at any resolution (e.g. four 1920×1080
+  "processor feeds") with no physical hardware connected. Each behaves exactly like a real
+  output — scale modes, 1:1 region offsets, labels — so the whole show can be mapped out in
+  advance. Remove them with ✕ when done.
+- **Export PNG** — save the current wall frame (pattern + overlay) at native wall
+  resolution, e.g. to load into a media server or send to the LED vendor.
 - **Live preview** — the control window previews exactly what outputs render (same code).
 - **Multiple outputs** — every display the OS sees gets a card: graphics card outputs
   (HDMI/DP/Thunderbolt), and playback/SDI cards whose drivers present them as displays.

@@ -42,7 +42,10 @@ function broadcastToOutputs(channel, payload) {
   }
 }
 
-function pushDisplays() { notifyControl('displays-changed', displayList()); }
+function pushDisplays() {
+  notifyControl('displays-changed', displayList());
+  notifyControl('active-outputs', [...outputWins.keys()].map(String));
+}
 
 function createControl() {
   controlWin = new BrowserWindow({
@@ -88,7 +91,42 @@ function createOutput(display) {
   console.log(`[main] output started on display ${display.id} (${display.bounds.width}x${display.bounds.height})`);
 }
 
+// Virtual output: a regular resizable window that behaves like a physical
+// output of the declared resolution — for mapping a show before the hardware
+// is connected. The renderer composites at the virtual resolution first, then
+// scales to the window, so scale modes and 1:1 offsets behave exactly like a
+// real output of that size.
+function createVirtualOutput(spec) {
+  const wa = screen.getPrimaryDisplay().workArea;
+  const scale = Math.min((wa.width * 0.55) / spec.width, (wa.height * 0.55) / spec.height, 1);
+  const win = new BrowserWindow({
+    width: Math.max(320, Math.round(spec.width * scale)),
+    height: Math.max(180, Math.round(spec.height * scale)),
+    title: `Lattice — ${spec.label || spec.id} (${spec.width}×${spec.height})`,
+    backgroundColor: '#000000',
+    webPreferences: { preload: PRELOAD, contextIsolation: true, nodeIntegration: false },
+  });
+  win.setAspectRatio(spec.width / spec.height);
+  const wcId = win.webContents.id;
+  outputWins.set(spec.id, win);
+  outputMeta.set(wcId, { displayId: spec.id, virtual: { width: spec.width, height: spec.height, label: spec.label || '' } });
+  win.loadFile(path.join(__dirname, 'renderer', 'output.html'));
+  win.on('closed', () => {
+    outputWins.delete(spec.id);
+    outputMeta.delete(wcId);
+    pushDisplays();
+  });
+}
+
 function identifyAll() {
+  let vIndex = 0;
+  for (const [key, win] of outputWins) {
+    if (typeof key === 'string' && String(key).startsWith('v') && !win.isDestroyed()) {
+      vIndex++;
+      const meta = outputMeta.get(win.webContents.id);
+      win.webContents.send('identify', { index: `V${vIndex}`, label: (meta && meta.virtual && meta.virtual.label) || 'Virtual output' });
+    }
+  }
   for (const d of displayList()) {
     if (outputWins.has(d.id)) {
       outputWins.get(d.id).webContents.send('identify', { index: d.index, label: d.label });
@@ -223,12 +261,27 @@ ipcMain.handle('set-config', (e, cfg) => {
   broadcastToOutputs('config', config);
 });
 
-ipcMain.handle('start-output', (e, displayId) => {
+ipcMain.handle('start-output', (e, displayId, virtualSpec) => {
   if (outputWins.has(displayId)) { outputWins.get(displayId).focus(); return; }
+  if (virtualSpec && virtualSpec.width > 0 && virtualSpec.height > 0) {
+    createVirtualOutput({
+      id: String(displayId),
+      width: Math.min(16384, virtualSpec.width | 0),
+      height: Math.min(16384, virtualSpec.height | 0),
+      label: String(virtualSpec.label || ''),
+    });
+    pushDisplays();
+    return;
+  }
   const display = screen.getAllDisplays().find((d) => d.id === displayId);
   if (!display) return;
   createOutput(display);
   pushDisplays();
+});
+
+ipcMain.handle('set-output-title', (e, displayId, title) => {
+  const win = outputWins.get(displayId);
+  if (win && !win.isDestroyed() && typeof title === 'string' && title) win.setTitle(title);
 });
 
 ipcMain.handle('stop-output', (e, displayId) => {
@@ -252,6 +305,16 @@ ipcMain.handle('close-self', (e) => {
 ipcMain.handle('my-output', (e) => {
   const meta = outputMeta.get(e.sender.id);
   if (!meta) return null;
+  if (meta.virtual) {
+    return {
+      id: meta.displayId,
+      virtual: true,
+      vWidth: meta.virtual.width,
+      vHeight: meta.virtual.height,
+      index: 'V',
+      label: meta.virtual.label || `Virtual ${meta.virtual.width}×${meta.virtual.height}`,
+    };
+  }
   const d = displayList().find((x) => x.id === meta.displayId);
   return d || { id: meta.displayId, index: 0, label: 'Unknown display' };
 });

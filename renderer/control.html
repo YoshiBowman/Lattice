@@ -9,6 +9,7 @@
   <header>
     <div class="brand">Lattice <span id="version" class="version"></span></div>
     <div class="header-actions">
+      <button id="exportBtn" class="btn">Export PNG</button>
       <button id="identifyBtn" class="btn">Identify Displays</button>
       <button id="stopAllBtn" class="btn danger">Stop All Outputs</button>
     </div>
@@ -151,7 +152,16 @@
       <section class="card">
         <h2>Outputs</h2>
         <div id="displayList"></div>
-        <div class="hint">Any connected display appears here — graphics card outputs, or a playback card whose driver presents it as a display. Press ESC on an output to close it.</div>
+        <div id="virtualList"></div>
+        <div class="add-virtual">
+          <label>W<input type="number" id="vW" min="16" max="16384" value="1920"></label>
+          <label>H<input type="number" id="vH" min="16" max="16384" value="1080"></label>
+          <button id="addVirtualBtn" class="btn">+ Add Virtual Output</button>
+        </div>
+        <div class="hint">Physical displays appear automatically — graphics card outputs, or a playback
+          card whose driver presents it as a display. Virtual outputs are windows that behave like a
+          display of the given resolution, so you can map the whole show before hardware is connected.
+          Press ESC on an output to close it.</div>
       </section>
     </section>
   </main>

@@ -15,12 +15,14 @@ const DEFAULTS = {
   },
   pattern: { type: 'grid', fg: '#ffffff', bg: '#000000', size: 16, speed: 2, gradMode: 'gray-h', dir: 'h' },
   overlay: { type: 'none', color: '#3fb950', opacity: 70, speed: 1, dir: 'h' },
-  outputs: {}, // displayId -> { mode, offsetX, offsetY, label, showLabel }
+  outputs: {}, // displayId | virtual id -> { mode, offsetX, offsetY, label, showLabel }
+  virtualOutputs: [], // [{ id: 'v1', width, height }]
 };
 
 let cfg = loadConfig();
 let displays = [];
 let previewRaf = null;
+let activeSet = new Set(); // stringified ids of currently running outputs
 
 const preview = $('#preview');
 const previewCtx = preview.getContext('2d');
@@ -35,6 +37,7 @@ function loadConfig() {
         pattern: { ...DEFAULTS.pattern, ...saved.pattern },
         overlay: { ...DEFAULTS.overlay, ...saved.overlay },
         outputs: saved.outputs || {},
+        virtualOutputs: saved.virtualOutputs || [],
       };
     }
   } catch (err) { /* corrupted config — fall through to defaults */ }
@@ -241,7 +244,8 @@ function renderDisplays() {
     labelInput.className = 'olabel';
     labelInput.placeholder = 'Output label';
     labelInput.value = oc.label || '';
-    labelInput.addEventListener('change', () => { oc.label = labelInput.value.trim(); push(); });
+    // 'input' so the label applies live with every keystroke — no blur needed
+    labelInput.addEventListener('input', () => { oc.label = labelInput.value.trim(); push(); });
     ctl.appendChild(labelInput);
 
     const showLab = document.createElement('label');
@@ -287,6 +291,133 @@ function renderDisplays() {
     card.append(num, info, ctl);
     box.appendChild(card);
   }
+  renderVirtuals();
+}
+
+function renderVirtuals() {
+  const box = $('#virtualList');
+  box.innerHTML = '';
+  cfg.virtualOutputs.forEach((v, i) => {
+    const oc = outCfgFor(v.id);
+    const active = activeSet.has(String(v.id));
+    const card = document.createElement('div');
+    card.className = 'display-card';
+
+    const num = document.createElement('div');
+    num.className = 'dnum';
+    num.textContent = 'V' + (i + 1);
+
+    const info = document.createElement('div');
+    info.className = 'dinfo';
+    const name = document.createElement('div');
+    name.className = 'dname';
+    name.textContent = oc.label || `Virtual output ${i + 1}`;
+    const res = document.createElement('div');
+    res.className = 'dres';
+    res.textContent = `${v.width} × ${v.height} px — virtual`;
+    info.append(name, res);
+
+    const ctl = document.createElement('div');
+    ctl.className = 'dctl';
+
+    const badge = document.createElement('span');
+    badge.className = active ? 'badge live' : 'badge virtual';
+    badge.textContent = active ? 'Live' : 'Virtual';
+    ctl.appendChild(badge);
+
+    const labelInput = document.createElement('input');
+    labelInput.type = 'text';
+    labelInput.className = 'olabel';
+    labelInput.placeholder = 'Output label';
+    labelInput.value = oc.label || '';
+    labelInput.addEventListener('input', () => {
+      oc.label = labelInput.value.trim();
+      name.textContent = oc.label || `Virtual output ${i + 1}`;
+      push();
+    });
+    ctl.appendChild(labelInput);
+
+    const showLab = document.createElement('label');
+    showLab.className = 'check-inline';
+    const showChk = document.createElement('input');
+    showChk.type = 'checkbox';
+    showChk.checked = !!oc.showLabel;
+    showChk.addEventListener('change', () => { oc.showLabel = showChk.checked; push(); });
+    showLab.append(showChk, document.createTextNode(' overlay'));
+    ctl.appendChild(showLab);
+
+    const modeSel = document.createElement('select');
+    for (const [val, label] of [['fit', 'Fit'], ['fill', 'Fill'], ['stretch', 'Stretch'], ['1to1', '1:1 pixel']]) {
+      const opt = document.createElement('option');
+      opt.value = val; opt.textContent = label;
+      modeSel.appendChild(opt);
+    }
+    modeSel.value = oc.mode;
+    modeSel.addEventListener('change', () => { oc.mode = modeSel.value; renderDisplays(); push(); });
+    ctl.appendChild(modeSel);
+
+    if (oc.mode === '1to1') {
+      for (const key of ['offsetX', 'offsetY']) {
+        const lab = document.createElement('label');
+        lab.textContent = key === 'offsetX' ? 'X' : 'Y';
+        const inp = document.createElement('input');
+        inp.type = 'number'; inp.min = '0'; inp.step = '1'; inp.value = oc[key];
+        inp.addEventListener('change', () => { oc[key] = Math.max(0, inp.value | 0); push(); });
+        lab.appendChild(inp);
+        ctl.appendChild(lab);
+      }
+    }
+
+    const btn = document.createElement('button');
+    btn.className = active ? 'btn danger' : 'btn primary';
+    btn.textContent = active ? 'Stop' : 'Start Output';
+    btn.addEventListener('click', () => {
+      if (active) window.ledwall.stopOutput(v.id);
+      else window.ledwall.startOutput(v.id, { width: v.width, height: v.height, label: oc.label });
+    });
+    ctl.appendChild(btn);
+
+    const rm = document.createElement('button');
+    rm.className = 'btn remove';
+    rm.textContent = '✕';
+    rm.title = 'Remove virtual output';
+    rm.addEventListener('click', () => {
+      window.ledwall.stopOutput(v.id);
+      cfg.virtualOutputs = cfg.virtualOutputs.filter((x) => x.id !== v.id);
+      delete cfg.outputs[v.id];
+      push();
+      renderDisplays();
+    });
+    ctl.appendChild(rm);
+
+    card.append(num, info, ctl);
+    box.appendChild(card);
+  });
+}
+
+let vSeq = 0;
+function addVirtualOutput() {
+  const width = Math.max(16, $('#vW').value | 0);
+  const height = Math.max(16, $('#vH').value | 0);
+  let id;
+  do { id = 'v' + Date.now().toString(36) + (vSeq++); } while (cfg.virtualOutputs.some((x) => x.id === id));
+  cfg.virtualOutputs.push({ id, width, height });
+  push();
+  renderDisplays();
+}
+
+// ---------- export ----------
+
+function exportWallPNG() {
+  resolveWall();
+  const c = document.createElement('canvas');
+  c.width = cfg.wall.width;
+  c.height = cfg.wall.height;
+  window.LED_RENDER_FRAME(c.getContext('2d'), cfg, performance.now());
+  const a = document.createElement('a');
+  a.download = `lattice-${cfg.pattern.type}-${cfg.wall.width}x${cfg.wall.height}.png`;
+  a.href = c.toDataURL('image/png');
+  a.click();
 }
 
 // ---------- input wiring ----------
@@ -442,6 +573,8 @@ function wireInputs() {
 
   $('#identifyBtn').addEventListener('click', () => window.ledwall.identify());
   $('#stopAllBtn').addEventListener('click', () => window.ledwall.stopAll());
+  $('#exportBtn').addEventListener('click', exportWallPNG);
+  $('#addVirtualBtn').addEventListener('click', addVirtualOutput);
 }
 
 // ---------- auto-update toast ----------
@@ -492,6 +625,7 @@ async function init() {
   displays = await window.ledwall.getDisplays();
   renderDisplays();
   window.ledwall.onDisplaysChanged((list) => { displays = list; renderDisplays(); });
+  window.ledwall.onActiveOutputs((list) => { activeSet = new Set(list); renderDisplays(); });
 
   window.addEventListener('resize', () => startPreview());
 
