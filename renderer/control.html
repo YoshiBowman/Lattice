@@ -130,9 +130,24 @@
         <div class="readout-row">
           <label class="check"><input type="checkbox" id="roLabel"> Center label</label>
           <label class="check"><input type="checkbox" id="roDims"> Wall dimensions</label>
+          <label class="check"><input type="checkbox" id="roScrim"> Backdrop</label>
+        </div>
+        <div class="readout-row">
+          <label class="inline-sel">Font
+            <select id="roFont">
+              <option value="mono">Mono (Menlo)</option>
+              <option value="sans">Sans (Helvetica)</option>
+              <option value="black">Heavy (Arial Black)</option>
+              <option value="condensed">Condensed</option>
+              <option value="serif">Serif (Georgia)</option>
+            </select>
+          </label>
+          <label class="file-btn btn">Logo PNG…<input type="file" id="roImage" accept="image/png,image/jpeg,image/webp"></label>
+          <button id="roImageClear" class="btn small remove" style="display:none">✕ logo</button>
         </div>
         <div class="hint">Rendered into the pattern itself — shows on outputs, preview and exports.
-          The center label is the output's label (or the wall name if none is set).</div>
+          The center label is the output's label (or the wall name if none is set); the logo sits
+          under the text.</div>
       </section>
 
       <section class="card">

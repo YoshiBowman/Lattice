@@ -66,9 +66,15 @@ git tag v<version> && git push origin main --tags
   Gray Steps (banding), Geometry (circles/crosshair/diagonals), 1px Lines (moiré/pixel
   pitch), Pixel Walk, Color Cycle, Motion Test (judder/latency, frame counter).
   Foreground/background colors, size/spacing, speed, and direction adjustable per pattern.
-- **Output labels** — name each output (e.g. "STAGE LEFT WALL") and toggle a big on-screen
-  overlay so you always know which feed you're looking at; labels apply live as you type
-  and also show in Identify and virtual-output window titles.
+- **Output labels & center readout** — name each output (e.g. "STAGE LEFT WALL"); the label
+  renders into the pattern itself, centered, live as you type (falls back to the wall name).
+  Toggles for a wall-dimensions line (px · panels · meters) and the backdrop box; five font
+  choices; optional **logo PNG** rendered under the text. All of it shows identically on
+  outputs, the preview and exports.
+- **Output position** — Pos X/Y on every output shifts where the image lands in the frame
+  (LED processors often capture a region that doesn't start at the frame's top-left).
+  Works in every scale mode; in 1:1, Crop X/Y picks the wall region and Pos X/Y places it.
+  **Arrow keys on an output window nudge position live** (Shift = 10 px).
 - **Virtual outputs** — add windowed outputs at any resolution (e.g. four 1920×1080
   "processor feeds") with no physical hardware connected. Each behaves exactly like a real
   output — scale modes, 1:1 region offsets, labels — so the whole show can be mapped out in

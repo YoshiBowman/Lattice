@@ -284,6 +284,12 @@ ipcMain.handle('set-output-title', (e, displayId, title) => {
   if (win && !win.isDestroyed() && typeof title === 'string' && title) win.setTitle(title);
 });
 
+// arrow-key nudge from an output window: the control window owns the config,
+// so relay the delta there; it updates posX/posY and pushes a fresh config
+ipcMain.handle('nudge-output', (e, displayId, dx, dy) => {
+  notifyControl('nudge-output', { id: displayId, dx: dx | 0, dy: dy | 0 });
+});
+
 ipcMain.handle('stop-output', (e, displayId) => {
   const win = outputWins.get(displayId);
   if (win && !win.isDestroyed()) win.close();

@@ -17,10 +17,11 @@ function myOutputCfg() {
   const o = (cfg && cfg.outputs && cfg.outputs[me.id]) || {};
   return {
     mode: o.mode || 'fit',
-    offsetX: o.offsetX | 0,
+    offsetX: o.offsetX | 0,   // source crop into the wall (1:1 mode)
     offsetY: o.offsetY | 0,
+    posX: o.posX | 0,         // where the image lands in the output frame
+    posY: o.posY | 0,
     label: o.label || '',
-    showLabel: !!o.showLabel,
     wallId: o.wallId,
   };
 }
@@ -91,15 +92,15 @@ function blitTo(vctx, W, H) {
   const w = wall.width, h = wall.height;
   vctx.fillStyle = '#000000';
   vctx.fillRect(0, 0, W, H);
-  const { mode, offsetX, offsetY } = myOutputCfg();
+  // posX/posY shift where the image lands in the output frame — LED processors
+  // often capture a region that doesn't start at the frame's top-left corner
+  const { mode, offsetX, offsetY, posX, posY } = myOutputCfg();
   if (mode === '1to1') {
     // true pixel mapping — always crisp
     vctx.imageSmoothingEnabled = false;
     const sx = Math.max(0, Math.min(offsetX, w - 1));
     const sy = Math.max(0, Math.min(offsetY, h - 1));
-    const sw = Math.min(w - sx, W);
-    const sh = Math.min(h - sy, H);
-    vctx.drawImage(wall, sx, sy, sw, sh, 0, 0, sw, sh);
+    vctx.drawImage(wall, sx, sy, w - sx, h - sy, posX, posY, w - sx, h - sy);
     return;
   }
   // Scaled modes: nearest-neighbor at non-integer ratios renders 1px lines
@@ -117,7 +118,7 @@ function blitTo(vctx, W, H) {
   const crisp = isIntegerScale(sX) && isIntegerScale(sY);
   vctx.imageSmoothingEnabled = !crisp;
   vctx.imageSmoothingQuality = 'high';
-  vctx.drawImage(wall, dx, dy, dw, dh);
+  vctx.drawImage(wall, dx + posX, dy + posY, dw, dh);
 }
 
 function renderFrame(t) {
@@ -173,9 +174,25 @@ async function init() {
 
   window.addEventListener('resize', () => { sizeView(); apply(); });
   window.addEventListener('keydown', (e) => {
-    if (e.key === 'Escape') window.ledwall.closeSelf();
+    if (e.key === 'Escape') { window.ledwall.closeSelf(); return; }
+    // arrow keys nudge this output's position in the frame (Shift = 10 px)
+    const step = e.shiftKey ? 10 : 1;
+    const nudge = {
+      ArrowLeft: [-step, 0], ArrowRight: [step, 0],
+      ArrowUp: [0, -step], ArrowDown: [0, step],
+    }[e.key];
+    if (nudge) {
+      e.preventDefault();
+      window.ledwall.nudgeOutput(me.id, nudge[0], nudge[1]);
+      const oc = myOutputCfg();
+      infoEl.textContent = `position ${oc.posX + nudge[0]}, ${oc.posY + nudge[1]}  (arrows nudge · shift = 10px)`;
+      infoEl.classList.remove('hidden');
+      clearTimeout(window.__posT);
+      window.__posT = setTimeout(() => infoEl.classList.add('hidden'), 1500);
+    }
   });
   if (me && me.virtual) document.body.style.cursor = 'default'; // windowed — keep the cursor
+  window.LED_ON_IMAGE_READY(() => apply()); // re-render once the logo decodes
 
   if (cfg) { apply(); showInfo(); }
 }

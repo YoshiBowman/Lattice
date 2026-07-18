@@ -21,8 +21,8 @@ const DEFAULTS = {
   selectedWall: 'w1',
   pattern: { type: 'grid', fg: '#ffffff', bg: '#000000', size: 16, speed: 2, gradMode: 'gray-h', dir: 'h' },
   overlay: { type: 'none', color: '#3fb950', opacity: 70, speed: 1, dir: 'h' },
-  readout: { label: true, dims: false }, // center label / wall name + dimensions line
-  outputs: {}, // displayId | virtual id -> { mode, offsetX, offsetY, label, wallId }
+  readout: { label: true, dims: false, scrim: true, font: 'mono', image: null }, // center label / wall name + dims + logo
+  outputs: {}, // displayId | virtual id -> { mode, offsetX, offsetY, posX, posY, label, wallId }
   virtualOutputs: [], // [{ id: 'v...', width, height }]
 };
 
@@ -331,7 +331,7 @@ function startPreview() {
 // ---------- outputs ----------
 
 function outCfgFor(id) {
-  if (!cfg.outputs[id]) cfg.outputs[id] = { mode: 'fit', offsetX: 0, offsetY: 0, label: '', wallId: cfg.walls[0].id };
+  if (!cfg.outputs[id]) cfg.outputs[id] = { mode: 'fit', offsetX: 0, offsetY: 0, posX: 0, posY: 0, label: '', wallId: cfg.walls[0].id };
   return cfg.outputs[id];
 }
 
@@ -379,13 +379,32 @@ function appendOutputControls(ctl, key, oc, active, startFn, nameEl) {
   if (oc.mode === '1to1') {
     for (const key2 of ['offsetX', 'offsetY']) {
       const lab = document.createElement('label');
-      lab.textContent = key2 === 'offsetX' ? 'X' : 'Y';
+      lab.title = 'Which part of the wall this output shows (source crop)';
+      lab.textContent = key2 === 'offsetX' ? 'Crop X' : 'Crop Y';
       const inp = document.createElement('input');
       inp.type = 'number'; inp.min = '0'; inp.step = '1'; inp.value = oc[key2];
+      inp.className = 'pos';
       inp.addEventListener('change', () => { oc[key2] = Math.max(0, inp.value | 0); push(); });
       lab.appendChild(inp);
       ctl.appendChild(lab);
     }
+  }
+
+  // where the image lands in the output frame — processors often capture a
+  // region that doesn't start at the frame's top-left. Arrow keys on the
+  // output window nudge these live (Shift = 10 px).
+  for (const key3 of ['posX', 'posY']) {
+    const lab = document.createElement('label');
+    lab.title = 'Position of the image within the output frame (arrow keys on the output nudge this)';
+    lab.textContent = key3 === 'posX' ? 'Pos X' : 'Pos Y';
+    const inp = document.createElement('input');
+    inp.type = 'number'; inp.step = '1'; inp.value = oc[key3] | 0;
+    inp.className = 'pos';
+    inp.dataset.poskey = key3;
+    inp.dataset.outid = String(key);
+    inp.addEventListener('change', () => { oc[key3] = inp.value | 0; push(); });
+    lab.appendChild(inp);
+    ctl.appendChild(lab);
   }
 
   const btn = document.createElement('button');
@@ -734,6 +753,40 @@ function wireInputs() {
   roDims.checked = !!cfg.readout.dims;
   roDims.addEventListener('change', () => { cfg.readout.dims = roDims.checked; push(); });
 
+  const roScrim = $('#roScrim');
+  roScrim.checked = cfg.readout.scrim !== false;
+  roScrim.addEventListener('change', () => { cfg.readout.scrim = roScrim.checked; push(); });
+
+  const roFont = $('#roFont');
+  roFont.value = cfg.readout.font || 'mono';
+  roFont.addEventListener('change', () => { cfg.readout.font = roFont.value; push(); });
+
+  const roImage = $('#roImage');
+  const roImageClear = $('#roImageClear');
+  roImageClear.style.display = cfg.readout.image ? '' : 'none';
+  roImage.addEventListener('change', () => {
+    const file = roImage.files && roImage.files[0];
+    if (!file) return;
+    if (file.size > 4 * 1024 * 1024) {
+      alert('Logo file is too large — keep it under 4 MB.');
+      roImage.value = '';
+      return;
+    }
+    const reader = new FileReader();
+    reader.onload = () => {
+      cfg.readout.image = reader.result;
+      roImageClear.style.display = '';
+      push();
+    };
+    reader.readAsDataURL(file);
+  });
+  roImageClear.addEventListener('click', () => {
+    cfg.readout.image = null;
+    roImage.value = '';
+    roImageClear.style.display = 'none';
+    push();
+  });
+
   $('#identifyBtn').addEventListener('click', () => window.ledwall.identify());
   $('#stopAllBtn').addEventListener('click', () => window.ledwall.stopAll());
   $('#exportBtn').addEventListener('click', exportWallPNG);
@@ -757,6 +810,17 @@ async function init() {
   renderDisplays();
   window.ledwall.onDisplaysChanged((list) => { displays = list; renderDisplays(); });
   window.ledwall.onActiveOutputs((list) => { activeSet = new Set(list); renderDisplays(); });
+  window.ledwall.onNudgeOutput(({ id, dx, dy }) => {
+    const oc = outCfgFor(id);
+    oc.posX = (oc.posX | 0) + dx;
+    oc.posY = (oc.posY | 0) + dy;
+    push();
+    // update visible pos inputs in place (full re-render would steal focus)
+    document.querySelectorAll(`input.pos[data-outid="${id}"]`).forEach((inp) => {
+      if (inp.dataset.poskey) inp.value = oc[inp.dataset.poskey];
+    });
+  });
+  window.LED_ON_IMAGE_READY(() => startPreview()); // re-render once the logo decodes
 
   window.addEventListener('resize', () => startPreview());
 

@@ -538,16 +538,42 @@
     return t;
   }
 
+  const READOUT_FONTS = {
+    mono: 'Menlo, Consolas, monospace',
+    sans: '-apple-system, "Helvetica Neue", Arial, sans-serif',
+    black: '"Arial Black", "Helvetica Neue", sans-serif',
+    condensed: '"Avenir Next Condensed", "Arial Narrow", sans-serif',
+    serif: 'Georgia, "Times New Roman", serif',
+  };
+
+  // Logo image cache: readout.image is a data URL; decode once, notify
+  // renderers when ready so static frames re-render with the image.
+  let _imgSrc = null, _imgEl = null, _imgReady = false;
+  const _imgCbs = [];
+  function getReadoutImage(src) {
+    if (!src) { _imgSrc = null; _imgEl = null; _imgReady = false; return null; }
+    if (src !== _imgSrc) {
+      _imgSrc = src;
+      _imgReady = false;
+      _imgEl = new Image();
+      _imgEl.onload = () => { _imgReady = true; _imgCbs.forEach((cb) => { try { cb(); } catch (_) { /* renderer gone */ } }); };
+      _imgEl.src = src;
+    }
+    return _imgReady ? _imgEl : null;
+  }
+
   function drawCenterReadout(ctx, cfg) {
     const w = cfg.wall;
     const readout = cfg.readout || {};
+    const font = READOUT_FONTS[readout.font] || READOUT_FONTS.mono;
     const lines = [];
     if (readout.label !== false) {
       const label = cfg.centerLabel || w.name;
       if (label) lines.push({ text: String(label), big: true });
     }
     if (readout.dims) lines.push({ text: dimsText(w), big: false });
-    if (!lines.length) return;
+    const img = getReadoutImage(readout.image);
+    if (!lines.length && !img) return;
 
     const big = Math.max(9, Math.min(w.width, w.height) * 0.11);
     const small = big * 0.42;
@@ -559,29 +585,44 @@
     let maxW = 0;
     for (const l of lines) {
       const base = l.big ? big : small;
-      ctx.font = `bold ${base}px Menlo, monospace`;
+      ctx.font = `bold ${base}px ${font}`;
       const tw = ctx.measureText(l.text).width;
       l.size = base * Math.min(1, (w.width * 0.9) / Math.max(1, tw));
       maxW = Math.max(maxW, Math.min(tw, w.width * 0.9));
     }
     const heights = lines.map((l) => l.size * 1.35);
-    const totalH = heights.reduce((a, b) => a + b, 0);
+    let totalH = heights.reduce((a, b) => a + b, 0);
+
+    // logo below the text — wall-relative sizing so the preview matches outputs
+    let imgW = 0, imgH = 0, imgGap = 0;
+    if (img && img.width && img.height) {
+      const s = Math.min((w.width * 0.4) / img.width, (w.height * 0.22) / img.height);
+      imgW = img.width * s;
+      imgH = img.height * s;
+      imgGap = lines.length ? big * 0.35 : 0;
+      maxW = Math.max(maxW, imgW);
+      totalH += imgGap + imgH;
+    }
+
     const padX = big * 0.6, padY = big * 0.4;
     const cx = w.width / 2, cy = w.height / 2;
 
-    ctx.fillStyle = 'rgba(0,0,0,0.55)';
-    ctx.beginPath();
-    ctx.roundRect(cx - maxW / 2 - padX, cy - totalH / 2 - padY, maxW + padX * 2, totalH + padY * 2, Math.max(3, big * 0.25));
-    ctx.fill();
+    if (readout.scrim !== false) {
+      ctx.fillStyle = 'rgba(0,0,0,0.55)';
+      ctx.beginPath();
+      ctx.roundRect(cx - maxW / 2 - padX, cy - totalH / 2 - padY, maxW + padX * 2, totalH + padY * 2, Math.max(3, big * 0.25));
+      ctx.fill();
+    }
 
     ctx.fillStyle = '#ffffff';
     let y = cy - totalH / 2;
     for (let i = 0; i < lines.length; i++) {
       const l = lines[i];
-      ctx.font = `bold ${l.size}px Menlo, monospace`;
+      ctx.font = `bold ${l.size}px ${font}`;
       ctx.fillText(l.text, cx, y + heights[i] / 2);
       y += heights[i];
     }
+    if (imgH) ctx.drawImage(img, cx - imgW / 2, y + imgGap, imgW, imgH);
     ctx.restore();
   }
 
@@ -606,6 +647,7 @@
   }
 
   window.LED_PATTERNS = PATTERNS;
+  window.LED_ON_IMAGE_READY = (cb) => _imgCbs.push(cb);
   window.LED_PATTERN_IS_ANIMATED = (type) => !!(PATTERNS[type] && PATTERNS[type].animated);
   window.LED_OVERLAYS = OVERLAYS;
   window.LED_RENDER_FRAME = renderFrame;
