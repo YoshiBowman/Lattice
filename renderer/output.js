@@ -67,8 +67,13 @@ const virtCtx = virt.getContext('2d');
 
 function blit() {
   const isVirtual = !!(me && me.virtual);
+  // A virtual output at exactly the wall's resolution (the pre-vis "Window")
+  // renders straight to the window like a physical output — that way
+  // fit/fill/stretch/1:1 visibly respond as you resize the window. Only
+  // custom-resolution virtual outputs simulate the fixed processor frame.
+  const direct = !isVirtual || (me.vWidth === wall.width && me.vHeight === wall.height);
   let tctx, W, H;
-  if (isVirtual) {
+  if (!direct) {
     if (virt.width !== me.vWidth) virt.width = me.vWidth;
     if (virt.height !== me.vHeight) virt.height = me.vHeight;
     tctx = virtCtx; W = virt.width; H = virt.height;
@@ -76,7 +81,7 @@ function blit() {
     tctx = vctx; W = view.width; H = view.height;
   }
   blitTo(tctx, W, H);
-  if (isVirtual) {
+  if (!direct) {
     // present the virtual frame in the window, letterboxed, smooth
     vctx.fillStyle = '#000000';
     vctx.fillRect(0, 0, view.width, view.height);
@@ -123,21 +128,30 @@ function blitTo(vctx, W, H) {
 
 const renderWallFrame = window.LED_CREATE_FRAME_RENDERER();
 
-function renderFrame(t) {
+// Rebuilt only when a config broadcast arrives — the renderer invalidates its
+// caches on object identity, and the animation loop must be allocation-free.
+let renderCfg = null;
+
+function rebuildRenderCfg() {
   const oc = myOutputCfg();
-  renderWallFrame(wctx, {
+  renderCfg = {
     wall: myWall(),
     pattern: cfg.pattern,
     overlay: cfg.overlay,
     readout: cfg.readout,
     centerLabel: oc.label,
-  }, t);
+  };
+}
+
+function renderFrame(t) {
+  renderWallFrame(wctx, renderCfg, t);
   blit();
 }
 
 function apply() {
   if (!cfg || !me) return;
   ensureWall();
+  rebuildRenderCfg();
   updateLabelOverlay();
   if (rafId !== null) { cancelAnimationFrame(rafId); rafId = null; }
   if (window.LED_FRAME_ANIMATED(cfg)) {

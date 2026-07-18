@@ -106,7 +106,8 @@ function createVirtualOutput(spec) {
     backgroundColor: '#000000',
     webPreferences: { preload: PRELOAD, contextIsolation: true, nodeIntegration: false },
   });
-  win.setAspectRatio(spec.width / spec.height);
+  // no aspect lock: resizing the window freely is how fit/fill/stretch become
+  // visible on a virtual output (locked aspect made all three identical)
   const wcId = win.webContents.id;
   outputWins.set(spec.id, win);
   outputMeta.set(wcId, { displayId: spec.id, virtual: { width: spec.width, height: spec.height, label: spec.label || '' } });

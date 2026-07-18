@@ -217,11 +217,70 @@ function previewWallInWindow(w) {
   cfg.virtualOutputs.push({ id, width: w.width, height: w.height });
   const oc = outCfgFor(id);
   oc.wallId = w.id;
-  oc.mode = '1to1';
+  oc.mode = 'fit'; // whole wall visible however the window is sized
   oc.label = w.name;
   push();
   renderDisplays();
   window.ledwall.startOutput(id, { width: w.width, height: w.height, label: w.name });
+}
+
+// ---------- wall -> output assignment dropdown ----------
+
+function rebuildWallOutputSelect() {
+  const sel = $('#wallOutput');
+  if (!sel) return;
+  const w = curWall();
+  sel.innerHTML = '';
+  const add = (v, label) => {
+    const o = document.createElement('option');
+    o.value = v;
+    o.textContent = label;
+    sel.appendChild(o);
+  };
+  add('', '— choose output —');
+  displays.forEach((d) => add('d:' + d.id, `Display ${d.index}: ${d.label}`));
+  cfg.virtualOutputs.forEach((v, i) => {
+    const oc = cfg.outputs[v.id];
+    add('v:' + v.id, `V${i + 1}: ${(oc && oc.label) || `${v.width}×${v.height}`}`);
+  });
+  add('new', '+ New virtual window (wall size)');
+  // show the output currently assigned to this wall (prefer a live one)
+  const assigned = Object.keys(cfg.outputs)
+    .filter((k) => cfg.outputs[k].wallId === w.id)
+    .sort((a, b) => (activeSet.has(String(b)) ? 1 : 0) - (activeSet.has(String(a)) ? 1 : 0))[0];
+  if (assigned !== undefined) {
+    const prefix = cfg.virtualOutputs.some((v) => String(v.id) === String(assigned)) ? 'v:' : 'd:';
+    sel.value = prefix + assigned;
+    if (sel.selectedIndex === -1) sel.value = ''; // stale id (display unplugged)
+  }
+}
+
+function wireWallOutputSelect() {
+  $('#wallOutput').addEventListener('change', () => {
+    const val = $('#wallOutput').value;
+    if (!val) return;
+    const w = curWall();
+    if (val === 'new') {
+      previewWallInWindow(w);
+      renderDisplays();
+      return;
+    }
+    const kind = val.slice(0, 1);
+    const idRaw = val.slice(2);
+    const id = kind === 'd' ? Number(idRaw) : idRaw;
+    const oc = outCfgFor(id);
+    oc.wallId = w.id;
+    push();
+    renderDisplays();
+    if (!activeSet.has(String(id))) {
+      if (kind === 'd') {
+        window.ledwall.startOutput(id);
+      } else {
+        const v = cfg.virtualOutputs.find((x) => String(x.id) === String(id));
+        if (v) window.ledwall.startOutput(v.id, { width: v.width, height: v.height, label: oc.label });
+      }
+    }
+  });
 }
 
 // ---------- pattern buttons & params ----------
@@ -313,21 +372,30 @@ function scaledCfgFor(w, s) {
   };
 }
 
-function drawPreviewFrame(t) {
+// Rebuilt only on config changes — the animation loop reuses the same object
+// every frame (the cached renderer invalidates on identity; per-frame object
+// churn caused GC hitches in the pulses).
+let previewCfg = null;
+
+function rebuildPreviewCfg() {
   const w = curWall();
   resolveWall(w);
-  const boxW = previewBoxW || Math.max(100, $('#previewBox').clientWidth - 16);
+  previewBoxW = Math.max(100, $('#previewBox').clientWidth - 16);
   const boxH = 300;
-  const s = Math.min(boxW / w.width, boxH / w.height, 1);
-  const pcfg = s < 1 ? scaledCfgFor(w, s) : { wall: w, pattern: cfg.pattern, overlay: cfg.overlay };
-  pcfg.readout = cfg.readout;
-  if (preview.width !== pcfg.wall.width) preview.width = pcfg.wall.width;
-  if (preview.height !== pcfg.wall.height) preview.height = pcfg.wall.height;
-  renderPreviewFrame(previewCtx, pcfg, t);
+  const s = Math.min(previewBoxW / w.width, boxH / w.height, 1);
+  previewCfg = s < 1 ? scaledCfgFor(w, s) : { wall: w, pattern: cfg.pattern, overlay: cfg.overlay };
+  previewCfg.readout = cfg.readout;
+}
+
+function drawPreviewFrame(t) {
+  if (!previewCfg) rebuildPreviewCfg();
+  if (preview.width !== previewCfg.wall.width) preview.width = previewCfg.wall.width;
+  if (preview.height !== previewCfg.wall.height) preview.height = previewCfg.wall.height;
+  renderPreviewFrame(previewCtx, previewCfg, t);
 }
 
 function startPreview() {
-  previewBoxW = Math.max(100, $('#previewBox').clientWidth - 16);
+  rebuildPreviewCfg();
   if (previewRaf !== null) { cancelAnimationFrame(previewRaf); previewRaf = null; }
   if (window.LED_FRAME_ANIMATED(cfg)) {
     const loop = (t) => { drawPreviewFrame(t); previewRaf = requestAnimationFrame(loop); };
@@ -465,6 +533,7 @@ function renderDisplays() {
     box.appendChild(card);
   }
   renderVirtuals();
+  rebuildWallOutputSelect();
 }
 
 function renderVirtuals() {
@@ -611,6 +680,7 @@ function syncWallInputs() {
   $('#wallW').value = w.width;
   $('#wallH').value = w.height;
   syncWallModeUI();
+  rebuildWallOutputSelect();
 }
 
 function bindWallNumber(sel, key) {
@@ -803,6 +873,7 @@ function wireInputs() {
   $('#exportBtn').addEventListener('click', exportWallPNG);
   $('#addVirtualBtn').addEventListener('click', addVirtualOutput);
   $('#addWallBtn').addEventListener('click', addWall);
+  wireWallOutputSelect();
 }
 
 // ---------- init ----------

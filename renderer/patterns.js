@@ -645,29 +645,47 @@
     drawDynamicLayers(ctx, cfg, t);
   }
 
-  // Cached renderer for continuous animation loops: static base patterns are
-  // drawn once into an offscreen canvas and blitted per frame, so an animated
-  // overlay only pays for its own moving parts (panel-map text etc. is heavy).
+  // Cached renderer for continuous animation loops. Two offscreen layers:
+  // the static base pattern and the (static) center readout, both invalidated
+  // by CONFIG OBJECT IDENTITY — callers must hand in a new cfg object when
+  // anything changes and reuse the same object across frames. Zero per-frame
+  // allocations (no key stringify, no object churn) so GC never hitches the
+  // animation loop.
   function createFrameRenderer() {
     const base = document.createElement('canvas');
     const bctx = base.getContext('2d');
-    let baseKey = '';
+    const deco = document.createElement('canvas');
+    const dctx = deco.getContext('2d');
+    let lastCfg = null;
+    let baseValid = false;
+    let decoValid = false;
+    _imgCbs.push(() => { decoValid = false; }); // logo decoded — redraw readout layer
     return function render(ctx, cfg, t) {
+      if (cfg !== lastCfg) { lastCfg = cfg; baseValid = false; decoValid = false; }
       const w = cfg.wall;
+      if (base.width !== w.width) { base.width = w.width; deco.width = w.width; baseValid = false; decoValid = false; }
+      if (base.height !== w.height) { base.height = w.height; deco.height = w.height; baseValid = false; decoValid = false; }
       const pat = PATTERNS[cfg.pattern.type] || PATTERNS.grid;
       if (pat.animated) {
         pat.draw(ctx, cfg, t);
       } else {
-        const key = JSON.stringify([w, cfg.pattern]);
-        if (base.width !== w.width) { base.width = w.width; baseKey = ''; }
-        if (base.height !== w.height) { base.height = w.height; baseKey = ''; }
-        if (key !== baseKey) {
-          pat.draw(bctx, cfg, t);
-          baseKey = key;
-        }
+        if (!baseValid) { pat.draw(bctx, cfg, t); baseValid = true; }
         ctx.drawImage(base, 0, 0);
       }
-      drawDynamicLayers(ctx, cfg, t);
+      const ovCfg = cfg.overlay;
+      const ov = ovCfg && OVERLAYS[ovCfg.type];
+      if (ov && ov.draw) {
+        ctx.save();
+        ctx.globalAlpha = (ovCfg.opacity == null ? 70 : ovCfg.opacity) / 100;
+        ov.draw(ctx, cfg, t);
+        ctx.restore();
+      }
+      if (!decoValid) {
+        dctx.clearRect(0, 0, deco.width, deco.height);
+        drawCenterReadout(dctx, cfg);
+        decoValid = true;
+      }
+      ctx.drawImage(deco, 0, 0);
     };
   }
 
