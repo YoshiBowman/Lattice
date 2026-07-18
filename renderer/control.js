@@ -22,8 +22,6 @@ let cfg = loadConfig();
 let displays = [];
 let previewRaf = null;
 
-const previewWall = document.createElement('canvas');
-const previewWallCtx = previewWall.getContext('2d');
 const preview = $('#preview');
 const previewCtx = preview.getContext('2d');
 
@@ -150,19 +148,42 @@ function syncOverlayUI() {
 
 // ---------- preview ----------
 
+// Build a config whose wall is scaled to preview size, with panel seams at
+// rounded positions. Rendering the pattern AT preview resolution keeps every
+// seam a crisp, uniform 1px line — downscaling a wall-resolution image instead
+// makes 1px lines vanish or vary in brightness depending on where they land.
+function scaledCfgFor(s) {
+  const g = window.LED_WALL_GRID(cfg.wall);
+  const xs = g.xs.map((v) => Math.round(v * s));
+  const ys = g.ys.map((v) => Math.round(v * s));
+  const colWidths = [], rowHeights = [];
+  for (let i = 0; i < g.cols; i++) colWidths.push(Math.max(1, xs[i + 1] - xs[i]));
+  for (let i = 0; i < g.rows; i++) rowHeights.push(Math.max(1, ys[i + 1] - ys[i]));
+  return {
+    wall: {
+      ...cfg.wall,
+      mode: 'manual',
+      colWidths, rowHeights,
+      custom: true,
+      width: Math.max(1, Math.round(cfg.wall.width * s)),
+      height: Math.max(1, Math.round(cfg.wall.height * s)),
+      pxLabelScale: 1 / s, // panelmap shows true panel px, not scaled
+    },
+    pattern: { ...cfg.pattern, size: Math.max(1, Math.round((cfg.pattern.size || 16) * s)) },
+    overlay: cfg.overlay,
+    outputs: cfg.outputs,
+  };
+}
+
 function drawPreviewFrame(t) {
   resolveWall();
-  if (previewWall.width !== cfg.wall.width) previewWall.width = cfg.wall.width;
-  if (previewWall.height !== cfg.wall.height) previewWall.height = cfg.wall.height;
-  window.LED_RENDER_FRAME(previewWallCtx, cfg, t);
-
   const boxW = Math.max(100, $('#previewBox').clientWidth - 16);
   const boxH = 300;
   const s = Math.min(boxW / cfg.wall.width, boxH / cfg.wall.height, 1);
-  preview.width = Math.max(1, Math.round(cfg.wall.width * s));
-  preview.height = Math.max(1, Math.round(cfg.wall.height * s));
-  previewCtx.imageSmoothingEnabled = false;
-  previewCtx.drawImage(previewWall, 0, 0, preview.width, preview.height);
+  const pcfg = s < 1 ? scaledCfgFor(s) : cfg;
+  if (preview.width !== pcfg.wall.width) preview.width = pcfg.wall.width;
+  if (preview.height !== pcfg.wall.height) preview.height = pcfg.wall.height;
+  window.LED_RENDER_FRAME(previewCtx, pcfg, t);
 }
 
 function startPreview() {

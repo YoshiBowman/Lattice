@@ -159,9 +159,10 @@
             ctx.font = `bold ${big}px Menlo, monospace`;
             ctx.fillText(colLetter(c) + (r + 1), cx, cy + big * 0.35);
             if (ph >= 48) {
+              const ls = cfg.wall.pxLabelScale || 1; // preview renders scaled — show true px
               const small = Math.max(6, Math.floor(big * 0.4));
               ctx.font = `${small}px Menlo, monospace`;
-              ctx.fillText(`${pw}×${ph}`, cx, cy + big * 0.35 + small * 1.4);
+              ctx.fillText(`${Math.round(pw * ls)}×${Math.round(ph * ls)}`, cx, cy + big * 0.35 + small * 1.4);
             }
           }
         }

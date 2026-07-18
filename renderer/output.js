@@ -48,26 +48,40 @@ function ensureWall() {
   if (wall.height !== h) wall.height = h;
 }
 
+const isIntegerScale = (s) => Math.abs(s - Math.round(s)) < 1e-6 && Math.round(s) >= 1;
+
 function blit() {
   const W = view.width, H = view.height;
   const w = wall.width, h = wall.height;
-  vctx.imageSmoothingEnabled = false;
   vctx.fillStyle = '#000000';
   vctx.fillRect(0, 0, W, H);
   const { mode, offsetX, offsetY } = myOutputCfg();
-  if (mode === 'stretch') {
-    vctx.drawImage(wall, 0, 0, W, H);
-  } else if (mode === '1to1') {
+  if (mode === '1to1') {
+    // true pixel mapping — always crisp
+    vctx.imageSmoothingEnabled = false;
     const sx = Math.max(0, Math.min(offsetX, w - 1));
     const sy = Math.max(0, Math.min(offsetY, h - 1));
     const sw = Math.min(w - sx, W);
     const sh = Math.min(h - sy, H);
     vctx.drawImage(wall, sx, sy, sw, sh, 0, 0, sw, sh);
+    return;
+  }
+  // Scaled modes: nearest-neighbor at non-integer ratios renders 1px lines
+  // unevenly (2px/3px alternating) or drops them entirely when a line lands
+  // on a sampling boundary. Smooth-scale unless the ratio is a clean integer.
+  let sX, sY, dx, dy, dw, dh;
+  if (mode === 'stretch') {
+    sX = W / w; sY = H / h; dx = 0; dy = 0; dw = W; dh = H;
   } else {
     const s = mode === 'fill' ? Math.max(W / w, H / h) : Math.min(W / w, H / h);
-    const dw = w * s, dh = h * s;
-    vctx.drawImage(wall, (W - dw) / 2, (H - dh) / 2, dw, dh);
+    sX = s; sY = s;
+    dw = w * s; dh = h * s;
+    dx = (W - dw) / 2; dy = (H - dh) / 2;
   }
+  const crisp = isIntegerScale(sX) && isIntegerScale(sY);
+  vctx.imageSmoothingEnabled = !crisp;
+  vctx.imageSmoothingQuality = 'high';
+  vctx.drawImage(wall, dx, dy, dw, dh);
 }
 
 function renderFrame(t) {
