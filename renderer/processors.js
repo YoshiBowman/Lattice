@@ -39,6 +39,16 @@
       note: '8-bit',
     },
     {
+      id: 'novastar-mctrl660', brand: 'NovaStar', model: 'MCTRL660',
+      ports: 4, portType: '1G Ethernet', pxPerPort: 650000, totalPx: 2600000,
+      note: '325k per port at 10/12-bit; standard input 1920×1200 = 2.3M, custom to 3840×3840',
+    },
+    {
+      id: 'novastar-mctrl660pro', brand: 'NovaStar', model: 'MCTRL660 PRO',
+      ports: 6, portType: '1G Ethernet (+2 × 10G optical)', pxPerPort: 650000, totalPx: 3900000,
+      note: 'one optical port carries all 6 Ethernet ports; standard input 1920×1200 = 2.3M, custom to 3840×2560',
+    },
+    {
       id: 'novastar-mctrl4k', brand: 'NovaStar', model: 'MCTRL4K',
       ports: 16, portType: '1G Ethernet', pxPerPort: 650000, totalPx: 8800000,
       note: '8.8M via DP/HDMI, 8.3M via DVI',
