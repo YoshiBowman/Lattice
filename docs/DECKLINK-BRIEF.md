@@ -172,6 +172,75 @@ required rather than changing the release workflow yourself.
 - [ ] Lattice still starts normally on this machine with the DeckLink output
       stopped, and existing display/virtual outputs behave exactly as before
 
+## 5a. Decisions after Phase 0 (added once the hardware was known)
+
+Phase 0 on the target machine found **2 × DeckLink Duo 2** (8 half-duplex
+sub-devices, Desktop Video 16.1, macOS 26.5.1 arm64), **SDI only, 1080p60
+maximum — no 4K modes at all**, and **no BGRA at 1080p50/59.94/60** (those rates
+are YUV 4:2:2 only). Two corrections and four decisions follow from that.
+
+**Correction to §4 gotcha 1:** the brief's "1920×1080, 3840×2160 etc." was
+written blind. On Duo 2 the ceiling is 1920×1080. That is not the limitation it
+first appears to be — see decision 2.
+
+**Correction to §3 / Phase 2 pixel format:** "prefer BGRA" only holds up to
+1080p30. At 1080p50/59.94/60 an RGBA→UYVY conversion is mandatory.
+
+1. **Verification method: SDI loopback, and it is the preferred gate.**
+   Play a known frame out of one sub-device, capture it on another, compare
+   pixels. This makes Phase 1 and most of the §5 checklist byte-exact instead of
+   someone squinting at a monitor, and it is the standard the rest of Lattice is
+   held to. Note its one limit: a loopback proves the *card's* path is clean
+   (clipping in the encode/decode round trip will show up), but it cannot tell
+   you which colour range a downstream **LED processor** expects. That last
+   question needs a real processor or reference monitor once, at the end.
+
+2. **Raster strategy: 1:1 with crop is the primary path, not the fallback.**
+   1080p is the natural unit here. LED processors take ~1920×1200 class inputs
+   by design (a NovaStar MCTRL660's standard input is 1920×1200), so a wall
+   larger than one raster is normally split across several feeds anyway — which
+   is exactly what Lattice's per-output wall assignment + `1to1` + Crop X/Y
+   already express. **Eight sub-devices map cleanly onto eight processor feeds,
+   each carrying a 1920×1080 region of a larger wall.** Design for that.
+   `fit` remains available for oversized walls but must be labelled in the UI as
+   downscaled / not pixel-exact.
+
+3. **Video mode: expose a per-output mode picker; do not hard-code 1080p60.**
+   The 60fps-versus-4:4:4 trade-off is real and depends on what is being tested:
+   - Grids, Panel Map, Checkerboard, Gray Steps are luma-contrast and survive
+     4:2:2 fine — 1080p60 is right for them.
+   - Motion Test is meaningless below 60fps.
+   - Colour Bars and coloured single-pixel detail need 4:4:4, so 1080p30 or
+     720p60.
+   Default to 1080p59.94/60, and surface a warning when the selected mode
+   subsamples chroma so the operator knows a colour-critical check is
+   compromised. Let them choose rather than choosing for them.
+
+4. **Route: (b), the standalone native helper — confirmed.** macadam vendoring
+   SDK 10.11.2 headers against a 16.1 driver, last released at 2.0.18, plus an
+   Electron 29 arm64 ABI rebuild, is too much fragility to attach to the release
+   pipeline. Keep Lattice's dependency tree native-free. Design notes for the
+   helper:
+   - **Frame transport must be shared memory, not a stdin pipe.** 1920×1080
+     BGRA at 60fps is ~500 MB/s; use an mmap'd ring buffer for pixels with a
+     small stdin/socket channel for control messages (start, stop, mode change)
+     and back-pressure.
+   - **Get frames out of Electron via an offscreen `BrowserWindow`**
+     (`webPreferences: { offscreen: true }`, `setFrameRate(60)`, `paint` event).
+     It hands you a raw **BGRA** buffer per frame, which is already the format
+     the card wants for ≤1080p30 and the natural input for the UYVY conversion.
+     Rule out `webContents.capturePage` — far too slow for 60fps.
+   - **Do the RGBA/BGRA→UYVY conversion in the helper using vImage**
+     (Accelerate.framework — present on every Mac, no new dependency,
+     SIMD-optimised). Keep it off the JS main thread.
+   - Frame pacing is the risk to watch: the existing renderer holds 60fps on two
+     simultaneous 4K outputs, and the DeckLink path must not regress that.
+
+5. **Device naming:** the sub-device labels are cosmetic user strings — one
+   card's are "Input 1–4". Show the card model plus sub-device index in
+   Lattice's UI (e.g. "DeckLink Duo 2 — SDI 3"), not the stored label, or an
+   output will appear named "Input 3".
+
 ## 6. What to report back
 
 1. Hardware/driver/OS specifics from Phase 0.
