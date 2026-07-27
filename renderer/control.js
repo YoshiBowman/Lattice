@@ -1288,12 +1288,35 @@ function updateBar() {
 function showUpdate(msg, withRestart) {
   const el = updateBar();
   el.querySelector('.msg').textContent = msg;
-  let btn = el.querySelector('button');
+  let btn = el.querySelector('button.install');
   if (withRestart && !btn) {
     btn = document.createElement('button');
-    btn.className = 'btn primary';
+    btn.className = 'btn primary install';
     btn.textContent = 'Restart & Update';
-    btn.addEventListener('click', () => window.ledwall.installUpdate());
+    btn.addEventListener('click', async () => {
+      btn.disabled = true;
+      btn.textContent = 'Updating…';
+      // A failed install used to be swallowed here, so the button looked dead.
+      // Surface the reason and offer the manual download instead.
+      let res;
+      try {
+        res = await window.ledwall.installUpdate();
+      } catch (err) {
+        res = { ok: false, error: err.message };
+      }
+      if (res && res.ok) return; // app is quitting to relaunch
+      btn.disabled = false;
+      btn.textContent = 'Try Again';
+      el.classList.add('failed');
+      el.querySelector('.msg').textContent = (res && res.error) || 'Update failed.';
+      if (!el.querySelector('button.manual')) {
+        const dl = document.createElement('button');
+        dl.className = 'btn manual';
+        dl.textContent = 'Download Manually';
+        dl.addEventListener('click', () => window.ledwall.openReleases());
+        el.appendChild(dl);
+      }
+    });
     el.appendChild(btn);
   }
   el.style.display = 'flex';

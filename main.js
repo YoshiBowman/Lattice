@@ -1,5 +1,5 @@
 'use strict';
-const { app, BrowserWindow, ipcMain, screen, dialog } = require('electron');
+const { app, BrowserWindow, ipcMain, screen, dialog, shell } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const os = require('os');
@@ -181,32 +181,81 @@ function macProperlySigned() {
   }
 }
 
-// Fallback installer for unsigned macOS builds: take the zip electron-updater
-// already downloaded, unpack to staging, swap the bundle, relaunch.
-function installUnsignedMacUpdate() {
-  const pendingDir = path.join(os.homedir(), 'Library', 'Caches', 'lattice-updater', 'pending');
-  const zips = fs.readdirSync(pendingDir)
-    .filter((f) => f.endsWith('.zip'))
-    .map((f) => path.join(pendingDir, f))
-    .sort((a, b) => fs.statSync(b).mtimeMs - fs.statSync(a).mtimeMs);
-  if (!zips.length) return { ok: false, error: 'No downloaded update zip found' };
+// Where electron-updater put the downloaded archive. Reported by the
+// update-downloaded event; the cache scan is only a fallback for older events.
+let downloadedFilePath = null;
 
-  const staging = fs.mkdtempSync(path.join(os.tmpdir(), 'lattice-update-'));
-  execFileSync('ditto', ['-x', '-k', zips[0], staging]);
-  const newApp = fs.readdirSync(staging).map((f) => path.join(staging, f)).find((f) => f.endsWith('.app'));
-  if (!newApp || !fs.existsSync(path.join(newApp, 'Contents', 'MacOS'))) {
-    return { ok: false, error: 'Update zip did not contain a valid app bundle' };
+function findDownloadedZip() {
+  if (downloadedFilePath && fs.existsSync(downloadedFilePath)) return downloadedFilePath;
+  const pendingDir = path.join(os.homedir(), 'Library', 'Caches', 'lattice-updater', 'pending');
+  try {
+    const zips = fs.readdirSync(pendingDir)
+      .filter((f) => f.endsWith('.zip'))
+      .map((f) => path.join(pendingDir, f))
+      .sort((a, b) => fs.statSync(b).mtimeMs - fs.statSync(a).mtimeMs);
+    return zips[0] || null;
+  } catch (_) {
+    return null;
+  }
+}
+
+// Fallback installer for unsigned macOS builds: unpack the downloaded zip and
+// swap the bundle in place. Transactional — the running app is only moved
+// aside once the replacement is staged on the SAME volume, and it is restored
+// if the swap fails, so a failed update can never leave the app missing.
+function installUnsignedMacUpdate() {
+  const bundle = appBundlePath();
+  const parent = path.dirname(bundle);
+
+  // Gatekeeper runs apps from outside /Applications in a read-only shadow
+  // copy ("app translocation") — nothing there can be updated in place.
+  if (/AppTranslocation/i.test(bundle)) {
+    return {
+      ok: false,
+      error: 'macOS is running Lattice from a temporary read-only copy. Move Lattice.app to your Applications folder, reopen it, then update.',
+    };
+  }
+  try {
+    fs.accessSync(parent, fs.constants.W_OK);
+    fs.accessSync(bundle, fs.constants.W_OK);
+  } catch (_) {
+    return { ok: false, error: `No permission to replace ${bundle}. Install Lattice somewhere you can write (usually /Applications).` };
   }
 
-  const bundle = appBundlePath();
-  const backup = bundle + '.old';
-  fs.rmSync(backup, { recursive: true, force: true });
-  execFileSync('/bin/mv', [bundle, backup]);   // running app keeps working from the renamed bundle
-  execFileSync('/bin/mv', [newApp, bundle]);
+  const zip = findDownloadedZip();
+  if (!zip) return { ok: false, error: 'The downloaded update could not be found — try checking for updates again.' };
 
-  spawn('open', ['-n', bundle], { detached: true, stdio: 'ignore' }).unref();
-  setTimeout(() => app.quit(), 400);
-  return { ok: true };
+  // stage beside the app so the final move stays on one volume
+  let staging = null;
+  try {
+    staging = fs.mkdtempSync(path.join(parent, '.lattice-update-'));
+    execFileSync('ditto', ['-x', '-k', zip, staging]);
+    const newApp = fs.readdirSync(staging)
+      .map((f) => path.join(staging, f))
+      .find((f) => f.endsWith('.app') && fs.existsSync(path.join(f, 'Contents', 'MacOS')));
+    if (!newApp) throw new Error('the downloaded archive did not contain an app bundle');
+
+    const backup = bundle + '.old';
+    fs.rmSync(backup, { recursive: true, force: true });
+    execFileSync('/bin/mv', [bundle, backup]); // running app keeps working from the renamed bundle
+    try {
+      execFileSync('/bin/mv', [newApp, bundle]);
+    } catch (err) {
+      execFileSync('/bin/mv', [backup, bundle]); // put the original back
+      throw err;
+    }
+    // a downloaded archive carries the quarantine flag; clear it so the
+    // swapped copy opens without a Gatekeeper prompt
+    try { execFileSync('xattr', ['-dr', 'com.apple.quarantine', bundle]); } catch (_) { /* best effort */ }
+
+    fs.rmSync(staging, { recursive: true, force: true });
+    spawn('open', ['-n', bundle], { detached: true, stdio: 'ignore' }).unref();
+    setTimeout(() => app.quit(), 400);
+    return { ok: true };
+  } catch (err) {
+    if (staging) fs.rmSync(staging, { recursive: true, force: true, maxRetries: 2 });
+    return { ok: false, error: `Update failed: ${err.message}` };
+  }
 }
 
 function setupAutoUpdater() {
@@ -226,6 +275,7 @@ function setupAutoUpdater() {
   });
   autoUpdater.on('update-downloaded', (info) => {
     updateDownloaded = true;
+    downloadedFilePath = info.downloadedFile || null;
     notifyControl('update-downloaded', { version: info.version, manualOnly: macNeedsManualSwap });
   });
   autoUpdater.on('error', (err) => {
@@ -238,17 +288,33 @@ function setupAutoUpdater() {
 }
 
 ipcMain.handle('install-update', () => {
-  if (!updateDownloaded) return { ok: false, error: 'No update downloaded yet' };
+  if (!updateDownloaded) return { ok: false, error: 'No update has finished downloading yet.' };
   if (macNeedsManualSwap) {
     try {
-      return installUnsignedMacUpdate();
+      const res = installUnsignedMacUpdate();
+      if (!res.ok) console.error('[updater]', res.error);
+      return res;
     } catch (err) {
       console.error('[updater] manual swap failed:', err.message);
-      return { ok: false, error: err.message };
+      return { ok: false, error: `Update failed: ${err.message}` };
     }
   }
-  setImmediate(() => autoUpdater.quitAndInstall());
-  return { ok: true };
+  // Signed macOS, Windows and Linux go through electron-updater. It hands off
+  // to a helper and quits, so failures surface synchronously here.
+  try {
+    autoUpdater.quitAndInstall();
+    return { ok: true };
+  } catch (err) {
+    console.error('[updater] quitAndInstall failed:', err.message);
+    const hint = process.platform === 'linux'
+      ? ' AppImage self-update needs the AppImage to be writable — download the new one manually.'
+      : '';
+    return { ok: false, error: `Update failed: ${err.message}.${hint}` };
+  }
+});
+
+ipcMain.handle('open-releases', () => {
+  shell.openExternal('https://github.com/YoshiBowman/Lattice/releases/latest');
 });
 
 // ---------- IPC ----------

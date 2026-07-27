@@ -21,6 +21,7 @@ contextBridge.exposeInMainWorld('ledwall', {
   getMyOutput: () => ipcRenderer.invoke('my-output'),
 
   installUpdate: () => ipcRenderer.invoke('install-update'),
+  openReleases: () => ipcRenderer.invoke('open-releases'),
 
   onConfig: (cb) => ipcRenderer.on('config', (e, cfg) => cb(cfg)),
   onIdentify: (cb) => ipcRenderer.on('identify', (e, info) => cb(info)),

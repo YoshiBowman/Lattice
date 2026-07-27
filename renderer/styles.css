@@ -223,4 +223,6 @@ input[type="text"] {
   background: var(--panel2); border: 1px solid var(--accent); border-radius: 10px;
   padding: 9px 16px; box-shadow: 0 6px 24px rgba(0,0,0,0.5);
 }
-#updateBar .msg { color: var(--text); }
+#updateBar .msg { color: var(--text); max-width: 620px; }
+#updateBar.failed { border-color: var(--danger); }
+#updateBar.failed .msg { color: var(--danger); }
