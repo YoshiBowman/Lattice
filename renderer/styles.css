@@ -207,6 +207,7 @@ input[type="text"] {
 
 .run-add { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin-top: 8px; }
 .sub-panel { margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--border); }
+.sub-panel.first { margin-top: 0; padding-top: 0; border-top: 0; margin-bottom: 12px; padding-bottom: 10px; border-bottom: 1px solid var(--border); }
 
 .check-grid { display: flex; flex-direction: column; gap: 7px; margin-bottom: 10px; }
 .check-grid .check { margin: 0; }

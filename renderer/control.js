@@ -20,7 +20,7 @@ const WALL_DEFAULTS = {
 // port; power sized by NEC continuous-load derate (volts × amps × 0.8).
 function emptyCabling() {
   return {
-    signal: { runs: [], maxPixelsPerPort: 650000, prefix: 'Port' },
+    signal: { runs: [], processorId: '', maxPixelsPerPort: 650000, prefix: 'Port' },
     power: { runs: [], wattsPerPanel: 150, volts: 120, ampsPerCircuit: 20, derate: 0.8, prefix: 'Circuit' },
   };
 }
@@ -892,6 +892,10 @@ function renderRunList() {
   updateCablingSummary();
 }
 
+function selectedProcessor() {
+  return window.LED_PROCESSOR_BY_ID(curWall().cabling.signal.processorId || '');
+}
+
 function updateCablingSummary() {
   const w = curWall();
   const g = window.LED_WALL_GRID(w);
@@ -900,16 +904,68 @@ function updateCablingSummary() {
   const assigned = assignmentMap();
   let covered = 0, doubled = 0;
   assigned.forEach((n) => { covered++; if (n > 1) doubled++; });
-  const over = runs().filter((r) => window.LED_RUN_LOAD(w, w.cabling, layer, r).over).length;
-  const bits = [`${runs().length} run${runs().length === 1 ? '' : 's'}`,
+  const list = runs();
+  const over = list.filter((r) => window.LED_RUN_LOAD(w, w.cabling, layer, r).over).length;
+  const bits = [`${list.length} run${list.length === 1 ? '' : 's'}`,
     `${covered}/${total} panels assigned`];
   if (doubled) bits.push(`⚠ ${doubled} double-fed`);
   if (over) bits.push(`⚠ ${over} over limit`);
   if (total - covered > 0) bits.push(`${total - covered} unassigned`);
+
+  // processor-level checks: a wall can fit per-port yet still exceed the
+  // processor's port count or its overall pixel ceiling
+  let bad = doubled || over;
+  if (layer === 'signal') {
+    const proc = selectedProcessor();
+    if (proc) {
+      if (list.length > proc.ports) {
+        bits.push(`⚠ ${list.length} runs > ${proc.ports} ports on ${proc.model}`);
+        bad = true;
+      }
+      let px = 0;
+      list.forEach((r) => { px += window.LED_RUN_LOAD(w, w.cabling, 'signal', r).pixels; });
+      if (px > proc.totalPx) {
+        bits.push(`⚠ ${(px / 1e6).toFixed(2)}M px > ${(proc.totalPx / 1e6).toFixed(2)}M on ${proc.model}`);
+        bad = true;
+      }
+    }
+  }
+
   const el = $('#cablingSummary');
   el.textContent = bits.join(' · ');
-  el.style.color = (doubled || over) ? 'var(--danger)' : 'var(--accent)';
+  el.style.color = bad ? 'var(--danger)' : 'var(--accent)';
   $('#cablingWallName').textContent = w.name;
+}
+
+function buildProcessorSelect() {
+  const sel = $('#processorSel');
+  sel.innerHTML = '';
+  const custom = document.createElement('option');
+  custom.value = '';
+  custom.textContent = 'Custom / not set';
+  sel.appendChild(custom);
+  window.LED_PROCESSOR_BRANDS().forEach((brand) => {
+    const grp = document.createElement('optgroup');
+    grp.label = brand;
+    window.LED_PROCESSORS.filter((p) => p.brand === brand).forEach((p) => {
+      const o = document.createElement('option');
+      o.value = p.id;
+      o.textContent = `${p.model} — ${p.ports} × ${(p.pxPerPort / 1000).toFixed(0)}k`;
+      grp.appendChild(o);
+    });
+    sel.appendChild(grp);
+  });
+}
+
+function updateProcessorInfo() {
+  const proc = selectedProcessor();
+  const el = $('#processorInfo');
+  if (!proc) {
+    el.textContent = 'Pick your processor to load its real per-port budget, or set the value by hand.';
+    return;
+  }
+  el.textContent = `${proc.ports} × ${proc.portType} · ${(proc.pxPerPort / 1000).toFixed(0)}k px per port · `
+    + `${(proc.totalPx / 1e6).toFixed(2)}M total${proc.note ? ' · ' + proc.note : ''}`;
 }
 
 // Walk order for auto-routing: serpentine reverses alternate lines (S-route),
@@ -976,6 +1032,9 @@ function syncCablingLimits() {
   $('#powerLimits').style.display = layer === 'power' ? '' : 'none';
   $('#powerLimits2').style.display = layer === 'power' ? '' : 'none';
   if (layer === 'signal') {
+    $('#processorSel').value = L.processorId || '';
+    if ($('#processorSel').selectedIndex === -1) $('#processorSel').value = '';
+    updateProcessorInfo();
     $('#maxPixels').value = L.maxPixelsPerPort;
     $('#signalPrefix').value = L.prefix || 'Port';
   } else {
@@ -1024,7 +1083,10 @@ function exportCablingPNG() {
   ctx.font = `bold ${Math.round(title * 0.6)}px Menlo, monospace`;
   ctx.textAlign = 'left';
   ctx.textBaseline = 'middle';
-  ctx.fillText(`${w.name} — ${curLayer() === 'signal' ? 'SIGNAL' : 'POWER'} — ${w.width}×${w.height}px · ${g.cols}×${g.rows} panels`,
+  const proc = curLayer() === 'signal' ? selectedProcessor() : null;
+  const src = proc ? ` · ${proc.brand} ${proc.model}`
+    : (curLayer() === 'power' ? ` · ${w.cabling.power.volts}V ${w.cabling.power.ampsPerCircuit}A` : '');
+  ctx.fillText(`${w.name} — ${curLayer() === 'signal' ? 'SIGNAL' : 'POWER'} — ${w.width}×${w.height}px · ${g.cols}×${g.rows} panels${src}`,
     pad, title * 0.62);
   ctx.save();
   ctx.translate(0, title);
@@ -1073,7 +1135,13 @@ function wireCabling() {
     if (!showing) {
       const s = suggestedPerRun();
       $('#arPerRun').value = s;
-      $('#arSuggest').textContent = `limit allows ~${s} panels per ${curLayer() === 'signal' ? 'port' : 'circuit'}`;
+      const g = window.LED_WALL_GRID(curWall());
+      const needed = Math.ceil((g.cols * g.rows) / s);
+      const unit = curLayer() === 'signal' ? 'port' : 'circuit';
+      let txt = `limit allows ~${s} panels per ${unit} → ${needed} ${unit}${needed === 1 ? '' : 's'} for this wall`;
+      const proc = curLayer() === 'signal' ? selectedProcessor() : null;
+      if (proc) txt += needed > proc.ports ? ` — ${proc.model} has only ${proc.ports}` : ` (${proc.model} has ${proc.ports})`;
+      $('#arSuggest').textContent = txt;
     }
   });
   $('#arCancel').addEventListener('click', () => { $('#autoRoutePanel').style.display = 'none'; });
@@ -1090,6 +1158,24 @@ function wireCabling() {
     });
   };
   limitBind('#maxPixels', 'maxPixelsPerPort', (v) => Math.max(1000, v | 0));
+
+  buildProcessorSelect();
+  $('#processorSel').addEventListener('change', () => {
+    const id = $('#processorSel').value;
+    const L = curWall().cabling.signal;
+    L.processorId = id;
+    const proc = window.LED_PROCESSOR_BY_ID(id);
+    if (proc) {
+      // selecting a processor loads its budget; the field stays editable for
+      // bit-depth / frame-rate cases the headline number doesn't cover
+      L.maxPixelsPerPort = proc.pxPerPort;
+      $('#maxPixels').value = proc.pxPerPort;
+      if (!L.prefix || L.prefix === 'Port') L.prefix = 'Port';
+    }
+    updateProcessorInfo();
+    push();
+    renderRunList();
+  });
   limitBind('#wattsPerPanel', 'wattsPerPanel', (v) => Math.max(1, v | 0));
   limitBind('#volts', 'volts', (v) => Math.max(90, v | 0));
   limitBind('#ampsPerCircuit', 'ampsPerCircuit', (v) => Math.max(1, v | 0));

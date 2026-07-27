@@ -81,8 +81,12 @@ git tag v<version> && git push origin main --tags
   choice of axis and start corner. The diagram shows direction arrows, install sequence
   numbers, home-run entry markers with port labels in the margin, and dashes the long jumper
   cables between non-adjacent panels. Live load checks: signal against a pixels-per-port
-  budget (650k default), power against volts × amps × NEC 0.8 derate — over-limit runs,
-  double-fed panels and unassigned panels are all flagged. Export a wiring diagram PNG, or
+  budget, power against volts × amps × NEC 0.8 derate — over-limit runs, double-fed panels
+  and unassigned panels are all flagged. **Pick your processor** (NovaStar VX4S/VX600/
+  VX1000/VX16s/MCTRL4K/MX40 Pro, Brompton Tessera S4/S8/SX40/SQ200, Megapixel HELIOS,
+  Colorlight Z6 Pro) to load its real per-port budget, and Lattice also checks your run
+  count against its port count and the wall against its total capacity. Values stay
+  editable — capacity varies with colour depth and frame rate. Export a wiring diagram PNG, or
   select the **Cabling Map** test pattern to display the diagram on the wall itself.
 - **Output labels & center readout** — name each output (e.g. "STAGE LEFT WALL"); the label
   renders into the pattern itself, centered, live as you type (falls back to the wall name).
