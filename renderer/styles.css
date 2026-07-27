@@ -170,6 +170,44 @@ input[type="text"] {
 .btn.danger:hover { background: rgba(229,83,75,0.12); }
 
 .hint { color: var(--muted); font-size: 12px; margin-top: 6px; }
+.card-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 10px; }
+.card-head h2 { margin: 0; }
+
+.tabs { display: flex; gap: 4px; background: var(--panel2); border: 1px solid var(--border); border-radius: 8px; padding: 3px; }
+.tabs .tab {
+  padding: 5px 14px; background: transparent; color: var(--muted); font: inherit; font-size: 12px;
+  border: 0; border-radius: 6px; cursor: pointer;
+}
+.tabs .tab:hover { color: var(--text); }
+.tabs .tab.active { background: var(--accent); color: #0b1220; font-weight: 600; }
+.tabs.small .tab { padding: 4px 11px; font-size: 11px; }
+
+#cablingBox {
+  background: #000; border: 1px solid var(--border); border-radius: 6px; padding: 8px;
+  display: flex; flex-direction: column; align-items: center; gap: 8px;
+}
+#cablingCanvas { max-width: 100%; cursor: crosshair; image-rendering: pixelated; }
+#cablingHint { margin: 0; }
+
+.run-row {
+  display: flex; align-items: center; gap: 8px;
+  background: var(--panel2); border: 1px solid var(--border); border-radius: 8px;
+  padding: 7px 10px; margin-bottom: 6px; cursor: pointer;
+}
+.run-row.selected { border-color: var(--accent); }
+.run-row .swatch { width: 12px; height: 12px; border-radius: 3px; flex-shrink: 0; }
+.run-row input.rname {
+  flex: 1; min-width: 60px; width: auto; margin-top: 0; padding: 3px 7px; font-size: 12px;
+  background: transparent; border-color: transparent;
+}
+.run-row input.rname:hover, .run-row input.rname:focus { background: var(--panel); border-color: var(--border); }
+.run-row .rload { color: var(--muted); font-size: 11px; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.run-row .rload.over { color: var(--danger); font-weight: 600; }
+.run-row select.redge { width: auto; margin-top: 0; padding: 3px 5px; font-size: 11px; }
+
+.run-add { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin-top: 8px; }
+.sub-panel { margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--border); }
+
 .check-grid { display: flex; flex-direction: column; gap: 7px; margin-bottom: 10px; }
 .check-grid .check { margin: 0; }
 .logo-row { display: flex; gap: 8px; align-items: center; margin-top: 4px; }

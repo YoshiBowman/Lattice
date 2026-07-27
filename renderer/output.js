@@ -140,6 +140,7 @@ function rebuildRenderCfg() {
     overlay: cfg.overlay,
     readout: cfg.readout,
     centerLabel: oc.label,
+    cablingLayer: cfg.cablingLayer,
   };
 }
 

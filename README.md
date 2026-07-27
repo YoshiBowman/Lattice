@@ -74,6 +74,16 @@ git tag v<version> && git push origin main --tags
   Gray Steps (banding), Geometry (circles/crosshair/diagonals), 1px Lines (moiré/pixel
   pitch), Pixel Walk, Color Cycle, Motion Test (judder/latency, frame counter).
   Foreground/background colors, size/spacing, speed, and direction adjustable per pattern.
+- **Cabling** — lay out signal and power home runs per wall. Each run is a cable leaving a
+  processor port (or a circuit breaker), entering the wall at its first panel and daisy-
+  chaining onward; multiple runs per wall per layer. Click or drag panels in the Cabling tab
+  to lay cable, or **Auto-route** with serpentine (S-route) / straight (Z-route) patterns,
+  choice of axis and start corner. The diagram shows direction arrows, install sequence
+  numbers, home-run entry markers with port labels in the margin, and dashes the long jumper
+  cables between non-adjacent panels. Live load checks: signal against a pixels-per-port
+  budget (650k default), power against volts × amps × NEC 0.8 derate — over-limit runs,
+  double-fed panels and unassigned panels are all flagged. Export a wiring diagram PNG, or
+  select the **Cabling Map** test pattern to display the diagram on the wall itself.
 - **Output labels & center readout** — name each output (e.g. "STAGE LEFT WALL"); the label
   renders into the pattern itself, centered, live as you type (falls back to the wall name).
   Toggles for a wall-dimensions line (px · panels · meters) and the backdrop box; five font

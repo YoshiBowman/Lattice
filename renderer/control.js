@@ -16,9 +16,33 @@ const WALL_DEFAULTS = {
   custom: false, width: 1376, height: 688,
 };
 
+// Cabling defaults follow industry norms: ~650k pixels per gigabit processor
+// port; power sized by NEC continuous-load derate (volts × amps × 0.8).
+function emptyCabling() {
+  return {
+    signal: { runs: [], maxPixelsPerPort: 650000, prefix: 'Port' },
+    power: { runs: [], wattsPerPanel: 150, volts: 120, ampsPerCircuit: 20, derate: 0.8, prefix: 'Circuit' },
+  };
+}
+
+// WALL_DEFAULTS holds objects/arrays — every new wall needs its own copies or
+// walls would share cabling runs and column lists.
+function freshWall(id, name, over) {
+  return {
+    ...WALL_DEFAULTS,
+    colWidths: WALL_DEFAULTS.colWidths.slice(),
+    rowHeights: WALL_DEFAULTS.rowHeights.slice(),
+    cabling: emptyCabling(),
+    id,
+    name,
+    ...(over || {}),
+  };
+}
+
 const DEFAULTS = {
-  walls: [{ ...WALL_DEFAULTS, id: 'w1' }],
+  walls: [freshWall('w1', 'Wall 1')],
   selectedWall: 'w1',
+  cablingLayer: 'signal',
   pattern: { type: 'grid', fg: '#ffffff', bg: '#000000', size: 16, speed: 2, gradMode: 'gray-h', dir: 'h' },
   overlay: { type: 'none', color: '#3fb950', opacity: 70, speed: 1, dir: 'h' },
   readout: { label: true, dims: false, scrim: true, font: 'mono', image: null }, // center label / wall name + dims + logo
@@ -45,10 +69,20 @@ function normalizeConfig(saved) {
     saved.selectedWall = 'w1';
   }
   const walls = (saved.walls && saved.walls.length ? saved.walls : DEFAULTS.walls)
-    .map((w, i) => ({ ...WALL_DEFAULTS, name: `Wall ${i + 1}`, id: 'w' + (i + 1), ...w }));
+    .map((w, i) => {
+      const merged = { ...freshWall('w' + (i + 1), `Wall ${i + 1}`), ...w };
+      // walls saved before cabling existed, or with a partial layer
+      const base = emptyCabling();
+      merged.cabling = {
+        signal: { ...base.signal, ...((w.cabling || {}).signal || {}) },
+        power: { ...base.power, ...((w.cabling || {}).power || {}) },
+      };
+      return merged;
+    });
   return {
     walls,
     selectedWall: walls.some((w) => w.id === saved.selectedWall) ? saved.selectedWall : walls[0].id,
+    cablingLayer: saved.cablingLayer === 'power' ? 'power' : 'signal',
     pattern: { ...DEFAULTS.pattern, ...saved.pattern },
     overlay: { ...DEFAULTS.overlay, ...saved.overlay },
     readout: { ...DEFAULTS.readout, ...saved.readout },
@@ -103,7 +137,8 @@ function push() {
   window.ledwall.setConfig(cfg);
   updateSummary();
   renderWalls();
-  startPreview();
+  if (cablingView) drawCablingEditor();
+  else startPreview();
 }
 
 function wallSummaryText(w) {
@@ -138,6 +173,12 @@ function renderWalls() {
       if (cfg.selectedWall !== w.id) {
         cfg.selectedWall = w.id;
         syncWallInputs();
+        activeRunId = null; // runs belong to the wall
+        if (cablingView) {
+          if (runs().length) activeRunId = runs()[0].id;
+          syncCablingLimits();
+          renderRunList();
+        }
         push();
       }
     });
@@ -166,7 +207,7 @@ function renderWalls() {
     dupBtn.title = 'Duplicate wall';
     dupBtn.addEventListener('click', (e) => {
       e.stopPropagation();
-      const copy = { ...w, id: newWallId(), name: w.name + ' copy', colWidths: w.colWidths.slice(), rowHeights: w.rowHeights.slice() };
+      const copy = JSON.parse(JSON.stringify({ ...w, id: newWallId(), name: w.name + ' copy' }));
       cfg.walls.push(copy);
       cfg.selectedWall = copy.id;
       syncWallInputs();
@@ -203,7 +244,7 @@ function newWallId() {
 }
 
 function addWall() {
-  const w = { ...WALL_DEFAULTS, id: newWallId(), name: `Wall ${cfg.walls.length + 1}`, colWidths: [500, 500], rowHeights: [500, 500] };
+  const w = freshWall(newWallId(), `Wall ${cfg.walls.length + 1}`);
   cfg.walls.push(w);
   cfg.selectedWall = w.id;
   syncWallInputs();
@@ -387,6 +428,7 @@ function rebuildPreviewCfg() {
   const s = Math.min(previewBoxW / w.width, boxH / w.height, 1);
   previewCfg = s < 1 ? scaledCfgFor(w, s) : { wall: w, pattern: cfg.pattern, overlay: cfg.overlay };
   previewCfg.readout = cfg.readout;
+  previewCfg.cablingLayer = cfg.cablingLayer;
 }
 
 function drawPreviewFrame(t) {
@@ -612,6 +654,451 @@ function addVirtualOutput() {
   renderDisplays();
 }
 
+// ---------- cabling ----------
+//
+// One "run" is a home run: a cable leaving a processor port (signal) or a
+// circuit breaker (power), entering the wall at its first panel, then
+// daisy-chaining panel to panel. Multiple runs per wall per layer.
+
+let cablingView = false;
+let activeRunId = null;
+let cabScale = 1;
+let cabWall = null;      // scaled copy of the wall used for drawing + hit-testing
+let cabPad = 0;          // margin the home-run markers/labels are drawn in
+let painting = false;
+
+const cabCanvas = $('#cablingCanvas');
+const cabCtx = cabCanvas.getContext('2d');
+
+function curLayer() { return cfg.cablingLayer === 'power' ? 'power' : 'signal'; }
+function layerCfg() { return curWall().cabling[curLayer()]; }
+function runs() { return layerCfg().runs; }
+function activeRun() { return runs().find((r) => r.id === activeRunId) || null; }
+
+function newRunId() { return 'r' + Date.now().toString(36) + (vSeq++); }
+
+function addRun(name) {
+  const list = runs();
+  const layer = curLayer();
+  const prefix = layerCfg().prefix || (layer === 'signal' ? 'Port' : 'Circuit');
+  const run = {
+    id: newRunId(),
+    name: name || `${prefix} ${list.length + 1}`,
+    color: window.LED_RUN_COLORS[list.length % window.LED_RUN_COLORS.length],
+    entry: '',
+    path: [],
+  };
+  list.push(run);
+  activeRunId = run.id;
+  return run;
+}
+
+// panel -> how many runs of this layer include it (0 = unassigned, >1 = double-fed)
+function assignmentMap() {
+  const map = new Map();
+  runs().forEach((run) => {
+    (run.path || []).forEach(([c, r]) => {
+      const k = c + ',' + r;
+      map.set(k, (map.get(k) || 0) + 1);
+    });
+  });
+  return map;
+}
+
+function cablingBoxWidth() {
+  const box = $('#cablingBox');
+  return Math.max(200, (box.clientWidth || 700) - 18);
+}
+
+// Shared painter for the editor canvas and the exported diagram: panel grid
+// with A1 coordinates and assignment shading, then the cabling on top. `pad`
+// is the margin that home-run markers and port labels live in.
+function paintCablingDiagram(ctx, wallObj, layer, pad, opts) {
+  const o = opts || {};
+  const g = window.LED_WALL_GRID(wallObj);
+  const assigned = o.assigned || new Map();
+  const unit = Math.min(g.colWidths[0] || 40, g.rowHeights[0] || 40);
+  const fs = Math.max(7, Math.floor(unit * 0.26));
+
+  ctx.save();
+  ctx.translate(pad, pad);
+  for (let r = 0; r < g.rows; r++) {
+    for (let c = 0; c < g.cols; c++) {
+      const x = g.xs[c], y = g.ys[r], pw = g.colWidths[c], ph = g.rowHeights[r];
+      const n = assigned.get(c + ',' + r) || 0;
+      ctx.fillStyle = n === 0 ? '#181b21' : '#23303d';
+      ctx.fillRect(x + 1, y + 1, pw - 2, ph - 2);
+      ctx.strokeStyle = n > 1 ? '#e5534b' : '#2e323b';
+      ctx.lineWidth = n > 1 ? 2 : 1;
+      ctx.strokeRect(x + 1.5, y + 1.5, pw - 3, ph - 3);
+      ctx.fillStyle = n === 0 ? '#5c636e' : '#9aa1ad';
+      ctx.font = `bold ${fs}px Menlo, monospace`;
+      ctx.textAlign = 'left';
+      ctx.textBaseline = 'top';
+      ctx.fillText(window.LED_COL_LETTER(c) + (r + 1), x + 4, y + 3);
+    }
+  }
+  window.LED_DRAW_CABLING(ctx, wallObj, wallObj.cabling, {
+    layer,
+    activeRunId: o.activeRunId,
+    bounds: { x0: -pad, y0: -pad, x1: g.width + pad, y1: g.height + pad },
+  });
+  ctx.restore();
+}
+
+function drawCablingEditor() {
+  if (!cablingView) return;
+  const w = curWall();
+  resolveWall(w);
+  const boxW = cablingBoxWidth();
+  const boxH = 430;
+  const marginGuess = 64; // room for the home-run margin at either end
+  cabScale = Math.min((boxW - marginGuess) / w.width, (boxH - marginGuess) / w.height, 1);
+  cabWall = scaledCfgFor(w, cabScale).wall;
+  cabWall.cabling = w.cabling;
+
+  const g = window.LED_WALL_GRID(cabWall);
+  const unit = Math.min(g.colWidths[0] || 40, g.rowHeights[0] || 40);
+  cabPad = Math.max(20, Math.round(unit * 0.8));
+  cabCanvas.width = cabWall.width + cabPad * 2;
+  cabCanvas.height = cabWall.height + cabPad * 2;
+
+  cabCtx.fillStyle = '#0b0d10';
+  cabCtx.fillRect(0, 0, cabCanvas.width, cabCanvas.height);
+  paintCablingDiagram(cabCtx, cabWall, curLayer(), cabPad, { activeRunId, assigned: assignmentMap() });
+}
+
+// canvas point -> [col, row] or null
+function panelAt(evt) {
+  if (!cabWall) return null;
+  const rect = cabCanvas.getBoundingClientRect();
+  const x = ((evt.clientX - rect.left) / rect.width) * cabCanvas.width - cabPad;
+  const y = ((evt.clientY - rect.top) / rect.height) * cabCanvas.height - cabPad;
+  const g = window.LED_WALL_GRID(cabWall);
+  let c = -1, r = -1;
+  for (let i = 0; i < g.cols; i++) if (x >= g.xs[i] && x < g.xs[i + 1]) { c = i; break; }
+  for (let i = 0; i < g.rows; i++) if (y >= g.ys[i] && y < g.ys[i + 1]) { r = i; break; }
+  return c >= 0 && r >= 0 ? [c, r] : null;
+}
+
+function touchPanel(cell, isDrag) {
+  if (!cell) return;
+  let run = activeRun();
+  if (!run) run = addRun();
+  const path = run.path;
+  const [c, r] = cell;
+  const last = path[path.length - 1];
+  if (last && last[0] === c && last[1] === r) {
+    if (!isDrag) path.pop(); // clicking the tip backs the cable up one panel
+    return;
+  }
+  if (path.some(([pc, pr]) => pc === c && pr === r)) return; // already in this run
+  path.push([c, r]);
+}
+
+function wireCablingCanvas() {
+  cabCanvas.addEventListener('mousedown', (e) => {
+    painting = true;
+    touchPanel(panelAt(e), false);
+    push();
+    renderRunList();
+  });
+  cabCanvas.addEventListener('mousemove', (e) => {
+    if (!painting) return;
+    const before = (activeRun() || { path: [] }).path.length;
+    touchPanel(panelAt(e), true);
+    if ((activeRun() || { path: [] }).path.length !== before) {
+      drawCablingEditor();
+      renderRunList();
+    }
+  });
+  const end = () => {
+    if (!painting) return;
+    painting = false;
+    push();
+    renderRunList();
+  };
+  window.addEventListener('mouseup', end);
+  cabCanvas.addEventListener('mouseleave', end);
+}
+
+function loadText(load, layer) {
+  if (layer === 'signal') {
+    return `${load.panels}p · ${(load.pixels / 1000).toFixed(0)}k px / ${(load.limit / 1000).toFixed(0)}k`;
+  }
+  return `${load.panels}p · ${load.watts}W · ${load.amps.toFixed(1)}A / ${load.limit.toFixed(1)}A`;
+}
+
+function renderRunList() {
+  const box = $('#runList');
+  if (!box) return;
+  const w = curWall();
+  const layer = curLayer();
+  box.innerHTML = '';
+  runs().forEach((run) => {
+    const row = document.createElement('div');
+    row.className = 'run-row' + (run.id === activeRunId ? ' selected' : '');
+    row.addEventListener('click', (e) => {
+      if (e.target.tagName === 'INPUT' || e.target.tagName === 'SELECT' || e.target.tagName === 'BUTTON') return;
+      activeRunId = run.id;
+      renderRunList();
+      drawCablingEditor();
+    });
+
+    const sw = document.createElement('div');
+    sw.className = 'swatch';
+    sw.style.background = run.color;
+
+    const name = document.createElement('input');
+    name.type = 'text';
+    name.className = 'rname';
+    name.value = run.name;
+    name.addEventListener('input', () => { run.name = name.value; push(); drawCablingEditor(); });
+
+    const edge = document.createElement('select');
+    for (const [v, t] of [['', 'auto'], ['left', '←'], ['right', '→'], ['top', '↑'], ['bottom', '↓']]) {
+      const o = document.createElement('option');
+      o.value = v; o.textContent = t;
+      edge.appendChild(o);
+    }
+    edge.className = 'redge';
+    edge.title = 'Which edge the home run enters from';
+    edge.value = run.entry || '';
+    edge.addEventListener('change', () => { run.entry = edge.value; push(); drawCablingEditor(); });
+
+    const load = window.LED_RUN_LOAD(w, w.cabling, layer, run);
+    const ld = document.createElement('span');
+    ld.className = 'rload' + (load.over ? ' over' : '');
+    ld.textContent = loadText(load, layer);
+    if (load.over) ld.title = 'Over the limit for one port/circuit';
+
+    const rm = document.createElement('button');
+    rm.className = 'btn small remove';
+    rm.textContent = '✕';
+    rm.title = 'Delete run';
+    rm.addEventListener('click', () => {
+      const list = runs();
+      list.splice(list.indexOf(run), 1);
+      if (activeRunId === run.id) activeRunId = list.length ? list[0].id : null;
+      push();
+      renderRunList();
+      drawCablingEditor();
+    });
+
+    row.append(sw, name, edge, ld, rm);
+    box.appendChild(row);
+  });
+
+  updateCablingSummary();
+}
+
+function updateCablingSummary() {
+  const w = curWall();
+  const g = window.LED_WALL_GRID(w);
+  const layer = curLayer();
+  const total = g.cols * g.rows;
+  const assigned = assignmentMap();
+  let covered = 0, doubled = 0;
+  assigned.forEach((n) => { covered++; if (n > 1) doubled++; });
+  const over = runs().filter((r) => window.LED_RUN_LOAD(w, w.cabling, layer, r).over).length;
+  const bits = [`${runs().length} run${runs().length === 1 ? '' : 's'}`,
+    `${covered}/${total} panels assigned`];
+  if (doubled) bits.push(`⚠ ${doubled} double-fed`);
+  if (over) bits.push(`⚠ ${over} over limit`);
+  if (total - covered > 0) bits.push(`${total - covered} unassigned`);
+  const el = $('#cablingSummary');
+  el.textContent = bits.join(' · ');
+  el.style.color = (doubled || over) ? 'var(--danger)' : 'var(--accent)';
+  $('#cablingWallName').textContent = w.name;
+}
+
+// Walk order for auto-routing: serpentine reverses alternate lines (S-route),
+// straight keeps every line in the same direction (Z-route, longer jumpers).
+function routeOrder(cols, rows, pattern, axis, corner) {
+  const cs = [...Array(cols).keys()];
+  const rs = [...Array(rows).keys()];
+  const colOrder = corner.includes('r') ? cs.slice().reverse() : cs;
+  const rowOrder = corner.startsWith('b') ? rs.slice().reverse() : rs;
+  const order = [];
+  if (axis === 'v') {
+    colOrder.forEach((c, i) => {
+      const line = (pattern === 'serp' && i % 2) ? rowOrder.slice().reverse() : rowOrder;
+      line.forEach((r) => order.push([c, r]));
+    });
+  } else {
+    rowOrder.forEach((r, i) => {
+      const line = (pattern === 'serp' && i % 2) ? colOrder.slice().reverse() : colOrder;
+      line.forEach((c) => order.push([c, r]));
+    });
+  }
+  return order;
+}
+
+function suggestedPerRun() {
+  const w = curWall();
+  const g = window.LED_WALL_GRID(w);
+  const layer = curLayer();
+  const probe = { id: 'x', path: [[0, 0]] };
+  const one = window.LED_RUN_LOAD(w, w.cabling, layer, probe);
+  const per = one.used > 0 ? Math.floor(one.limit / one.used) : g.cols * g.rows;
+  return Math.max(1, Math.min(per, g.cols * g.rows));
+}
+
+function applyAutoRoute() {
+  const w = curWall();
+  const g = window.LED_WALL_GRID(w);
+  const perRun = Math.max(1, $('#arPerRun').value | 0);
+  const order = routeOrder(g.cols, g.rows, $('#arPattern').value, $('#arAxis').value, $('#arCorner').value);
+  const prefix = layerCfg().prefix || (curLayer() === 'signal' ? 'Port' : 'Circuit');
+  const list = [];
+  for (let i = 0; i < order.length; i += perRun) {
+    const idx = list.length;
+    list.push({
+      id: newRunId(),
+      name: `${prefix} ${idx + 1}`,
+      color: window.LED_RUN_COLORS[idx % window.LED_RUN_COLORS.length],
+      entry: '',
+      path: order.slice(i, i + perRun),
+    });
+  }
+  layerCfg().runs = list;
+  activeRunId = list.length ? list[0].id : null;
+  $('#autoRoutePanel').style.display = 'none';
+  push();
+  renderRunList();
+  drawCablingEditor();
+}
+
+function syncCablingLimits() {
+  const layer = curLayer();
+  const L = layerCfg();
+  $('#signalLimits').style.display = layer === 'signal' ? '' : 'none';
+  $('#powerLimits').style.display = layer === 'power' ? '' : 'none';
+  $('#powerLimits2').style.display = layer === 'power' ? '' : 'none';
+  if (layer === 'signal') {
+    $('#maxPixels').value = L.maxPixelsPerPort;
+    $('#signalPrefix').value = L.prefix || 'Port';
+  } else {
+    $('#wattsPerPanel').value = L.wattsPerPanel;
+    $('#volts').value = L.volts;
+    $('#ampsPerCircuit').value = L.ampsPerCircuit;
+    $('#derate').value = L.derate;
+  }
+  document.querySelectorAll('#cablingCard .tabs .tab').forEach((t) => {
+    t.classList.toggle('active', t.dataset.layer === layer);
+  });
+}
+
+function setView(view) {
+  cablingView = view === 'cabling';
+  $('#previewBox').style.display = cablingView ? 'none' : '';
+  $('#cablingBox').style.display = cablingView ? '' : 'none';
+  $('#cablingCard').style.display = cablingView ? '' : 'none';
+  document.querySelectorAll('.card-head .tabs .tab[data-view]').forEach((t) => {
+    t.classList.toggle('active', (t.dataset.view === 'cabling') === cablingView);
+  });
+  if (cablingView) {
+    if (!activeRunId && runs().length) activeRunId = runs()[0].id;
+    syncCablingLimits();
+    renderRunList();
+    drawCablingEditor();
+  } else {
+    startPreview();
+  }
+}
+
+function exportCablingPNG() {
+  const w = curWall();
+  resolveWall(w);
+  const g = window.LED_WALL_GRID(w);
+  const unit = Math.min(g.colWidths[0] || 100, g.rowHeights[0] || 100);
+  const pad = Math.max(24, Math.round(unit * 0.8));
+  const title = Math.round(unit * 0.5);
+  const c = document.createElement('canvas');
+  c.width = w.width + pad * 2;
+  c.height = w.height + pad * 2 + title;
+  const ctx = c.getContext('2d');
+  ctx.fillStyle = '#0b0d10';
+  ctx.fillRect(0, 0, c.width, c.height);
+  ctx.fillStyle = '#e6e8ec';
+  ctx.font = `bold ${Math.round(title * 0.6)}px Menlo, monospace`;
+  ctx.textAlign = 'left';
+  ctx.textBaseline = 'middle';
+  ctx.fillText(`${w.name} — ${curLayer() === 'signal' ? 'SIGNAL' : 'POWER'} — ${w.width}×${w.height}px · ${g.cols}×${g.rows} panels`,
+    pad, title * 0.62);
+  ctx.save();
+  ctx.translate(0, title);
+  paintCablingDiagram(ctx, w, curLayer(), pad, { assigned: assignmentMap() });
+  ctx.restore();
+  const a = document.createElement('a');
+  const safe = (w.name || 'wall').replace(/[^\w-]+/g, '_');
+  a.download = `lattice-${safe}-${curLayer()}-cabling.png`;
+  a.href = c.toDataURL('image/png');
+  a.click();
+}
+
+function wireCabling() {
+  document.querySelectorAll('.card-head .tabs .tab[data-view]').forEach((t) => {
+    t.addEventListener('click', () => setView(t.dataset.view));
+  });
+  document.querySelectorAll('#cablingCard .tabs .tab[data-layer]').forEach((t) => {
+    t.addEventListener('click', () => {
+      cfg.cablingLayer = t.dataset.layer;
+      activeRunId = runs().length ? runs()[0].id : null;
+      syncCablingLimits();
+      renderRunList();
+      drawCablingEditor();
+      push();
+    });
+  });
+
+  $('#addRunBtn').addEventListener('click', () => {
+    addRun();
+    push();
+    renderRunList();
+    drawCablingEditor();
+  });
+  $('#clearRunBtn').addEventListener('click', () => {
+    const run = activeRun();
+    if (!run) return;
+    run.path = [];
+    push();
+    renderRunList();
+    drawCablingEditor();
+  });
+  $('#autoRouteBtn').addEventListener('click', () => {
+    const panel = $('#autoRoutePanel');
+    const showing = panel.style.display !== 'none';
+    panel.style.display = showing ? 'none' : '';
+    if (!showing) {
+      const s = suggestedPerRun();
+      $('#arPerRun').value = s;
+      $('#arSuggest').textContent = `limit allows ~${s} panels per ${curLayer() === 'signal' ? 'port' : 'circuit'}`;
+    }
+  });
+  $('#arCancel').addEventListener('click', () => { $('#autoRoutePanel').style.display = 'none'; });
+  $('#arApply').addEventListener('click', applyAutoRoute);
+  $('#exportCablingBtn').addEventListener('click', exportCablingPNG);
+
+  const limitBind = (sel, key, parse) => {
+    $(sel).addEventListener('change', () => {
+      const el = $(sel);
+      layerCfg()[key] = parse(el.value);
+      el.value = layerCfg()[key];
+      push();
+      renderRunList();
+    });
+  };
+  limitBind('#maxPixels', 'maxPixelsPerPort', (v) => Math.max(1000, v | 0));
+  limitBind('#wattsPerPanel', 'wattsPerPanel', (v) => Math.max(1, v | 0));
+  limitBind('#volts', 'volts', (v) => Math.max(90, v | 0));
+  limitBind('#ampsPerCircuit', 'ampsPerCircuit', (v) => Math.max(1, v | 0));
+  limitBind('#derate', 'derate', (v) => Math.min(1, Math.max(0.1, parseFloat(v) || 0.8)));
+  $('#signalPrefix').addEventListener('input', () => { layerCfg().prefix = $('#signalPrefix').value; });
+
+  wireCablingCanvas();
+}
+
 // ---------- show files ----------
 
 // re-sync every content/readout input from cfg (after loading a show)
@@ -673,6 +1160,8 @@ async function loadShowFile() {
     syncPatternUI();
     syncOverlayUI();
     syncContentUI();
+    activeRunId = null;
+    if (cablingView) { syncCablingLimits(); renderRunList(); }
     push();
     renderDisplays();
     flashButton('#loadShowBtn', 'Loaded ✓');
@@ -957,6 +1446,7 @@ function wireInputs() {
   $('#saveShowBtn').addEventListener('click', saveShowFile);
   $('#loadShowBtn').addEventListener('click', loadShowFile);
   wireWallOutputSelect();
+  wireCabling();
 }
 
 // ---------- init ----------

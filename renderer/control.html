@@ -188,8 +188,90 @@
     <!-- ───────── column 3: preview + routing ───────── -->
     <section id="colRight">
       <section class="card">
-        <h2>Preview <span id="previewRes" class="summary-inline"></span></h2>
+        <div class="card-head">
+          <div class="tabs">
+            <button class="tab active" data-view="preview">Preview</button>
+            <button class="tab" data-view="cabling">Cabling</button>
+          </div>
+          <span id="previewRes" class="summary-inline"></span>
+        </div>
         <div id="previewBox"><canvas id="preview"></canvas></div>
+        <div id="cablingBox" style="display:none">
+          <canvas id="cablingCanvas"></canvas>
+          <div class="hint" id="cablingHint">Click or drag panels to lay the cable in order. Click the
+            last panel again to back up.</div>
+        </div>
+      </section>
+
+      <section class="card" id="cablingCard" style="display:none">
+        <div class="card-head">
+          <h2>Cabling — <span id="cablingWallName" class="summary-inline"></span></h2>
+          <div class="tabs small">
+            <button class="tab active" data-layer="signal">Signal</button>
+            <button class="tab" data-layer="power">Power</button>
+          </div>
+        </div>
+
+        <div id="runList"></div>
+
+        <div class="run-add">
+          <button id="addRunBtn" class="btn primary">+ Add Run</button>
+          <button id="clearRunBtn" class="btn">Clear Path</button>
+          <button id="autoRouteBtn" class="btn">Auto-route…</button>
+          <button id="exportCablingBtn" class="btn">Export Diagram</button>
+        </div>
+
+        <div id="autoRoutePanel" class="sub-panel" style="display:none">
+          <div class="row2">
+            <label>Route pattern
+              <select id="arPattern">
+                <option value="serp">Serpentine (S-route)</option>
+                <option value="straight">Straight (Z-route)</option>
+              </select>
+            </label>
+            <label>Direction
+              <select id="arAxis">
+                <option value="v">Vertical (columns)</option>
+                <option value="h">Horizontal (rows)</option>
+              </select>
+            </label>
+          </div>
+          <div class="row2">
+            <label>Start corner
+              <select id="arCorner">
+                <option value="tl">Top left</option>
+                <option value="tr">Top right</option>
+                <option value="bl">Bottom left</option>
+                <option value="br">Bottom right</option>
+              </select>
+            </label>
+            <label>Panels per run<input type="number" id="arPerRun" min="1" max="500" value="12"></label>
+          </div>
+          <div class="run-add">
+            <button id="arApply" class="btn primary">Generate Runs</button>
+            <button id="arCancel" class="btn">Cancel</button>
+            <span id="arSuggest" class="hint"></span>
+          </div>
+        </div>
+
+        <div class="sub-panel">
+          <div id="signalLimits" class="row2">
+            <label>Max pixels per port<input type="number" id="maxPixels" min="1000" step="1000" value="650000"></label>
+            <label>Source prefix<input type="text" id="signalPrefix" value="Port" spellcheck="false"></label>
+          </div>
+          <div id="powerLimits" class="row2" style="display:none">
+            <label>Watts per panel (max)<input type="number" id="wattsPerPanel" min="1" max="2000" value="150"></label>
+            <label>Volts<input type="number" id="volts" min="90" max="480" value="120"></label>
+          </div>
+          <div id="powerLimits2" class="row2" style="display:none">
+            <label>Circuit amps<input type="number" id="ampsPerCircuit" min="1" max="200" value="20"></label>
+            <label>Derate (NEC 0.8)<input type="number" id="derate" min="0.1" max="1" step="0.05" value="0.8"></label>
+          </div>
+        </div>
+
+        <div id="cablingSummary" class="summary"></div>
+        <div class="hint">Dashed segments are jumper cables between non-adjacent panels. Unassigned
+          panels are dimmed; panels fed twice on one layer are flagged.</div>
       </section>
 
       <section class="card">

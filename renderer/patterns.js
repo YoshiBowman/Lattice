@@ -203,6 +203,40 @@
       },
     },
 
+    cablingmap: {
+      name: 'Cabling Map',
+      params: ['fg', 'bg'],
+      draw(ctx, cfg) {
+        // panel grid with A1 coordinates, then the wall's cabling on top —
+        // the same diagram the editor shows, displayed on the wall itself
+        const { width: w, height: h } = cfg.wall;
+        const g = wallGrid(cfg.wall);
+        fillBG(ctx, cfg);
+        ctx.fillStyle = 'rgba(255,255,255,0.06)';
+        for (let r = 0; r < g.rows; r++) {
+          for (let c = 0; c < g.cols; c++) {
+            if ((r + c) & 1) ctx.fillRect(g.xs[c], g.ys[r], g.colWidths[c], g.rowHeights[r]);
+          }
+        }
+        ctx.fillStyle = cfg.pattern.fg;
+        for (const x of g.xs) ctx.fillRect(Math.min(x, w - 1), 0, 1, h);
+        for (const y of g.ys) ctx.fillRect(0, Math.min(y, h - 1), w, 1);
+        ctx.textAlign = 'center';
+        for (let r = 0; r < g.rows; r++) {
+          for (let c = 0; c < g.cols; c++) {
+            const pw = g.colWidths[c], ph = g.rowHeights[r];
+            const fs = Math.max(7, Math.floor(Math.min(pw, ph) * 0.2));
+            ctx.font = `bold ${fs}px Menlo, monospace`;
+            ctx.fillStyle = 'rgba(255,255,255,0.5)';
+            ctx.fillText(colLetter(c) + (r + 1), g.xs[c] + pw / 2, g.ys[r] + fs * 1.4);
+          }
+        }
+        if (cfg.wall.cabling) {
+          drawCabling(ctx, cfg.wall, cfg.wall.cabling, { layer: cfg.cablingLayer || 'signal' });
+        }
+      },
+    },
+
     gradient: {
       name: 'Gradient',
       params: ['gradMode'],
@@ -538,6 +572,228 @@
     return t;
   }
 
+  // ---------------------------------------------------------------------------
+  // Cabling: signal (data) and power runs through the panel grid.
+  //
+  // A run models one home run: a cable leaving a processor port / power circuit
+  // (the source), entering the wall at the first panel, then daisy-chaining
+  // panel to panel — the industry S-route / straight-route patterns. Segments
+  // between non-adjacent panels are drawn dashed: those are the long jumper
+  // cables at the end of a column or row.
+  const RUN_COLORS = [
+    '#3fa9f5', '#3fb950', '#f5a623', '#e5534b', '#bd93f9',
+    '#00d4c8', '#ff79c6', '#9fd356', '#ffd166', '#7aa2f7',
+  ];
+
+  function panelRect(g, c, r) {
+    return { x: g.xs[c], y: g.ys[r], w: g.colWidths[c], h: g.rowHeights[r] };
+  }
+
+  function panelCenter(g, c, r) {
+    const p = panelRect(g, c, r);
+    return { x: p.x + p.w / 2, y: p.y + p.h / 2 };
+  }
+
+  function panelPixels(w, c, r) {
+    const g = wallGrid(w);
+    const ls = w.pxLabelScale || 1;
+    return Math.round(g.colWidths[c] * ls) * Math.round(g.rowHeights[r] * ls);
+  }
+
+  // Load / limit maths for one run. Signal = pixels vs port budget,
+  // power = watts vs circuit capacity (volts × amps × derate).
+  function runLoad(wall, cabling, layer, run) {
+    const path = run.path || [];
+    const out = { panels: path.length, pixels: 0, watts: 0, amps: 0, over: false, limit: 0, used: 0 };
+    if (layer === 'signal') {
+      const cfgL = cabling.signal || {};
+      for (const [c, r] of path) out.pixels += panelPixels(wall, c, r);
+      out.limit = cfgL.maxPixelsPerPort || 650000;
+      out.used = out.pixels;
+    } else {
+      const cfgL = cabling.power || {};
+      const wpp = cfgL.wattsPerPanel || 150;
+      const volts = cfgL.volts || 120;
+      out.watts = path.length * wpp;
+      out.amps = out.watts / volts;
+      out.limit = (cfgL.ampsPerCircuit || 20) * (cfgL.derate == null ? 0.8 : cfgL.derate);
+      out.used = out.amps;
+    }
+    out.over = out.used > out.limit;
+    return out;
+  }
+
+  function arrowHead(ctx, x, y, angle, size) {
+    ctx.beginPath();
+    ctx.moveTo(x, y);
+    ctx.lineTo(x - Math.cos(angle - 0.4) * size, y - Math.sin(angle - 0.4) * size);
+    ctx.lineTo(x - Math.cos(angle + 0.4) * size, y - Math.sin(angle + 0.4) * size);
+    ctx.closePath();
+    ctx.fill();
+  }
+
+  // Which wall edge the home run enters from. Explicit setting wins; otherwise
+  // infer it from the first hop — the cable arrives from behind the direction
+  // of travel — falling back to the nearest edge for single-panel runs.
+  function entryEdge(run, g, c, r) {
+    if (run.entry) return run.entry;
+    const path = run.path || [];
+    if (path.length > 1) {
+      const [nc, nr] = path[1];
+      if (nr < r) return 'bottom';
+      if (nr > r) return 'top';
+      if (nc > c) return 'left';
+      if (nc < c) return 'right';
+    }
+    const p = panelRect(g, c, r);
+    const d = [
+      ['left', p.x],
+      ['right', g.width - (p.x + p.w)],
+      ['top', p.y],
+      ['bottom', g.height - (p.y + p.h)],
+    ].sort((a, b) => a[1] - b[1]);
+    return d[0][0];
+  }
+
+  // Draws the cabling layer over an existing panel-grid background.
+  // opts: { layer, activeRunId, showSeq, dim }
+  function drawCabling(ctx, wall, cabling, opts) {
+    const o = opts || {};
+    const layer = o.layer || 'signal';
+    const g = wallGrid(wall);
+    const runs = ((cabling && cabling[layer]) || {}).runs || [];
+    const unit = Math.min(g.colWidths[0] || 100, g.rowHeights[0] || 100);
+    const lw = Math.max(2, unit * 0.055);
+    const dot = Math.max(3, unit * 0.1);
+
+    ctx.save();
+    ctx.lineJoin = 'round';
+    ctx.lineCap = 'round';
+
+    runs.forEach((run, ri) => {
+      const path = (run.path || []).filter(([c, r]) => c < g.cols && r < g.rows);
+      if (!path.length) return;
+      const color = run.color || RUN_COLORS[ri % RUN_COLORS.length];
+      const active = !o.activeRunId || run.id === o.activeRunId;
+      ctx.globalAlpha = active ? 1 : 0.28;
+
+      // home-run stub from outside the wall into the first panel
+      const [c0, r0] = path[0];
+      const first = panelCenter(g, c0, r0);
+      const p0 = panelRect(g, c0, r0);
+      const edge = entryEdge(run, g, c0, r0);
+      const stub = unit * 0.45;
+      const stubStart = {
+        left: { x: p0.x - stub, y: first.y },
+        right: { x: p0.x + p0.w + stub, y: first.y },
+        top: { x: first.x, y: p0.y - stub },
+        bottom: { x: first.x, y: p0.y + p0.h + stub },
+      }[edge];
+      // Clamp the entry marker into the drawable area. `bounds` lets callers
+      // with a margin (the editor and the exported diagram) put home-run
+      // markers and port labels OUTSIDE the wall, the way wiring diagrams are
+      // drawn; on the wall itself bounds is the wall rect, so they tuck inside.
+      const B = o.bounds || { x0: 0, y0: 0, x1: g.width, y1: g.height };
+      const pad = dot * 1.4;
+      stubStart.x = Math.max(B.x0 + pad, Math.min(B.x1 - pad, stubStart.x));
+      stubStart.y = Math.max(B.y0 + pad, Math.min(B.y1 - pad, stubStart.y));
+
+      // dark casing under everything for contrast on any pattern
+      ctx.strokeStyle = 'rgba(0,0,0,0.75)';
+      ctx.lineWidth = lw * 2.1;
+      ctx.setLineDash([]);
+      ctx.beginPath();
+      ctx.moveTo(stubStart.x, stubStart.y);
+      ctx.lineTo(first.x, first.y);
+      for (let i = 1; i < path.length; i++) {
+        const p = panelCenter(g, path[i][0], path[i][1]);
+        ctx.lineTo(p.x, p.y);
+      }
+      ctx.stroke();
+
+      // colored cable: solid between adjacent panels, dashed on jumper runs
+      ctx.strokeStyle = color;
+      ctx.lineWidth = lw;
+      ctx.beginPath();
+      ctx.moveTo(stubStart.x, stubStart.y);
+      ctx.lineTo(first.x, first.y);
+      ctx.stroke();
+      for (let i = 1; i < path.length; i++) {
+        const [pc, pr] = path[i - 1];
+        const [cc, cr] = path[i];
+        const a = panelCenter(g, pc, pr);
+        const b = panelCenter(g, cc, cr);
+        const adjacent = Math.abs(cc - pc) + Math.abs(cr - pr) === 1;
+        ctx.setLineDash(adjacent ? [] : [lw * 1.6, lw * 1.4]);
+        ctx.beginPath();
+        ctx.moveTo(a.x, a.y);
+        ctx.lineTo(b.x, b.y);
+        ctx.stroke();
+        // direction arrow at the midpoint of every segment
+        ctx.setLineDash([]);
+        ctx.fillStyle = color;
+        arrowHead(ctx, (a.x + b.x) / 2, (a.y + b.y) / 2, Math.atan2(b.y - a.y, b.x - a.x), lw * 2.4);
+      }
+      ctx.setLineDash([]);
+
+      // home marker + source label at the stub
+      ctx.fillStyle = color;
+      ctx.beginPath();
+      ctx.arc(stubStart.x, stubStart.y, dot * 1.15, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.strokeStyle = 'rgba(0,0,0,0.75)';
+      ctx.lineWidth = Math.max(1, lw * 0.35);
+      ctx.stroke();
+
+      // source label sits beside the marker, offset perpendicular to the entry
+      // direction so it never lands on the marker or the "1" sequence badge
+      const fs = Math.max(9, unit * 0.17);
+      const label = run.source || run.name || `Run ${ri + 1}`;
+      ctx.font = `bold ${fs}px Menlo, Consolas, monospace`;
+      ctx.textBaseline = 'middle';
+      const tw = ctx.measureText(label).width;
+      const bw = tw + fs * 0.5;
+      const bh = fs * 1.44;
+      let bx, by;
+      if (edge === 'left') { bx = stubStart.x - bw - dot * 1.2; by = stubStart.y - bh / 2; }
+      else if (edge === 'right') { bx = stubStart.x + dot * 1.2; by = stubStart.y - bh / 2; }
+      else if (edge === 'top') { bx = stubStart.x - bw / 2; by = stubStart.y - bh - dot * 1.1; }
+      else { bx = stubStart.x - bw / 2; by = stubStart.y + dot * 1.1; }
+      bx = Math.max(B.x0 + 2, Math.min(B.x1 - bw - 2, bx));
+      by = Math.max(B.y0 + 2, Math.min(B.y1 - bh - 2, by));
+      ctx.fillStyle = 'rgba(0,0,0,0.72)';
+      ctx.beginPath();
+      ctx.roundRect(bx, by, bw, bh, fs * 0.25);
+      ctx.fill();
+      ctx.fillStyle = color;
+      ctx.textAlign = 'left';
+      ctx.fillText(label, bx + fs * 0.25, by + bh / 2);
+
+      // per-panel sequence numbers (install order)
+      if (o.showSeq !== false) {
+        const sf = Math.max(8, unit * 0.15);
+        ctx.font = `bold ${sf}px Menlo, Consolas, monospace`;
+        ctx.textAlign = 'center';
+        path.forEach(([c, r], i) => {
+          // bottom-right corner: keeps the badge off the cable, which runs
+          // through the panel centers, and off the A1 coordinate label
+          const pr2 = panelRect(g, c, r);
+          const x = pr2.x + pr2.w - sf * 1.05;
+          const y = pr2.y + pr2.h - sf * 1.05;
+          ctx.fillStyle = 'rgba(0,0,0,0.72)';
+          ctx.beginPath();
+          ctx.arc(x, y, sf * 0.82, 0, Math.PI * 2);
+          ctx.fill();
+          ctx.fillStyle = color;
+          ctx.fillText(String(i + 1), x, y);
+        });
+      }
+    });
+
+    ctx.globalAlpha = 1;
+    ctx.restore();
+  }
+
   const READOUT_FONTS = {
     mono: 'Menlo, Consolas, monospace',
     sans: '-apple-system, "Helvetica Neue", Arial, sans-serif',
@@ -703,4 +959,8 @@
   window.LED_FRAME_ANIMATED = frameAnimated;
   window.LED_WALL_GRID = wallGrid;
   window.LED_COL_LETTER = colLetter;
+  window.LED_DRAW_CABLING = drawCabling;
+  window.LED_RUN_LOAD = runLoad;
+  window.LED_RUN_COLORS = RUN_COLORS;
+  window.LED_PANEL_RECT = panelRect;
 })();
