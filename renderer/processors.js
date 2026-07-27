@@ -94,6 +94,28 @@
       ports: 4, portType: '10G fibre', pxPerPort: 2211840, totalPx: 8847360,
       note: 'max width/height 8192 px',
     },
+
+    // ---- DBSTAR (Nanjing DBSTAR) — ports are 1280×512 = 655,360 px ----
+    {
+      id: 'dbstar-hvt09', brand: 'DBSTAR', model: 'DBS-HVT09',
+      ports: 2, portType: '1G Ethernet', pxPerPort: 655360, totalPx: 1310720,
+      note: 'sending card; 2048×640 dual-port, also 1280×1024 / 1024×1200',
+    },
+    {
+      id: 'dbstar-hvt11', brand: 'DBSTAR', model: 'DBS-HVT11 (HVT2011)',
+      ports: 2, portType: '1G Ethernet', pxPerPort: 655360, totalPx: 1310720,
+      note: 'sending card; 2048×640 dual-port, also 1280×1024 / 1024×1200; dual-link hot backup',
+    },
+    {
+      id: 'dbstar-hvt13vp', brand: 'DBSTAR', model: 'DBS-HVT13VP',
+      ports: 4, portType: '1G Ethernet', pxPerPort: 655360, totalPx: 2304000,
+      note: '1280×512 per port; all four together rated 2560×900',
+    },
+    {
+      id: 'dbstar-hvt13vpm', brand: 'DBSTAR', model: 'DBS-HVT13VP-M',
+      ports: 4, portType: '1G Ethernet', pxPerPort: 655360, totalPx: 2304000,
+      note: '1280×512 per port; all four together rated 2560×900; 10-bit processing',
+    },
   ];
 
   const byId = (id) => PROCESSORS.find((p) => p.id === id) || null;
