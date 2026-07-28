@@ -117,9 +117,9 @@ harness, not throwaways.
 - `loopscan.cpp` — transmit a colour unique to each port, capture on all others,
   correlate by content. Lock state alone cannot do this: `IdleOutputOperation =
   Black` means an idle output still radiates valid SDI, so every cabled input
-  reads as "locked" whether or not you are driving it. **Its 1200 ms settle is
-  too short** (see the pairing section) — raise it before trusting a negative
-  result.
+  reads as "locked" whether or not you are driving it. Its settle was raised
+  1200 ms → 2200 ms after the pairing work showed 1200 ms is marginal; a shorter
+  window can report a false negative.
 - `pairtest.cpp` — repeated control-vs-test trials used to settle §5c.
   `--trials N --settle MS`.
 

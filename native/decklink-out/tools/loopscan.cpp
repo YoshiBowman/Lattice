@@ -175,7 +175,7 @@ int main() {
             in->StartStreams();
             ins[j] = in; cbs[j] = cb;
         }
-        usleep(1200 * 1000);
+        usleep(2200 * 1000);   // 1200ms measured marginal: inputs intermittently fail to lock (see README)
 
         double eY, eCb, eCr; rgb2ycc709(sig, eY, eCb, eCr);
         printf("[%zu] %-28s transmitting %s\n", o, devs[o].name.c_str(), sig.name);
