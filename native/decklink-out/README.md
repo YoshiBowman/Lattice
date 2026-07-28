@@ -68,6 +68,45 @@ Outstanding as a direct consequence:
 To close these: connect **card #1 SDI 1 → card #1 SDI 2** and run
 `tools/loopscan.cpp`, which already does content-correlated capture and compare.
 
+## Sub-device pairing (§5c) — resolved, ports are independent
+
+The observation that transmitting on card #2 SDI 3 made SDI 4 lose its input
+**does not reproduce, and is explained**. It was a measurement artefact of too
+short a settle window, not connector pairing.
+
+`tools/pairtest.cpp` runs repeated trials: a control that transmits nothing, and
+one trial per transmitting port, sampling every other input. Fraction of trials
+in which each card #2 input delivered frames:
+
+| Settle | Result |
+|---|---|
+| 900 ms | sporadic failures; control clean |
+| 1200 ms | sporadic failures **including the control row** (c2/SDI2 at 67% with nobody transmitting) |
+| 1600 ms | 100% across 8 trials, every ordered pair |
+| 2000 ms | 100% across 6 trials, every ordered pair |
+
+The 1200 ms control failure is the decisive one: an input dropped out with
+nothing being transmitted at all, so transmission cannot be the cause. The
+original sighting came from `loopscan`, which used exactly 1200 ms.
+
+**Consequence:** the eight sub-devices are independent. Decision 2's "8
+sub-devices = 8 processor feeds" holds and the Phase 3 UI does not need
+constraining.
+
+**Still open, but no longer blocking:** reading the *active* profile via
+`IDeckLinkProfileManager` as §5c asked. That interface was introduced in SDK
+11.0 and is absent from the 10.11.2 headers currently available on this machine,
+and no newer SDK is obtainable from npm. It needs the real Desktop Video SDK
+from Blackmagic's site. It would be confirmation rather than new information —
+the empirical result above already answers the question the profile readout was
+being used to infer.
+
+**Design note for Phase 3:** do not depend on a fixed settle constant. The
+margin between 1200 ms (flaky) and 1600 ms (clean) is not large, and it will
+differ with signal type and driver version. Poll for lock with a timeout, or
+drive off the input format-changed callback, rather than sleeping a magic
+number.
+
 ## tools/
 
 Read-only diagnostics from Phase 0/1, kept because they are the verification
@@ -78,7 +117,15 @@ harness, not throwaways.
 - `loopscan.cpp` — transmit a colour unique to each port, capture on all others,
   correlate by content. Lock state alone cannot do this: `IdleOutputOperation =
   Black` means an idle output still radiates valid SDI, so every cabled input
-  reads as "locked" whether or not you are driving it.
+  reads as "locked" whether or not you are driving it. **Its 1200 ms settle is
+  too short** (see the pairing section) — raise it before trusting a negative
+  result.
+- `pairtest.cpp` — repeated control-vs-test trials used to settle §5c.
+  `--trials N --settle MS`.
+
+Because an idle output radiates black, the passive scan doubles as a cable
+detector: with a loopback fitted, the receiving port shows signal even before
+anything is deliberately transmitted.
 
 Build either the same way as the helper:
 
