@@ -241,6 +241,81 @@ first appears to be — see decision 2.
    Lattice's UI (e.g. "DeckLink Duo 2 — SDI 3"), not the stored label, or an
    output will appear named "Input 3".
 
+## 5b. Phase 1/2 outcome (measured on the hardware machine)
+
+**Cabling, established by content-correlated matrix scan of all 56 ordered port
+pairs, twice:** card #1's four BNCs are unconnected; card #2's four all receive
+external signal at 1080i59.94 (SDI 4 carrying live moving content). **Zero
+loopback pairs.** The Duo 2 has no internal loop-through, so no software setting
+creates a return path. Unblocking Phase 1 needs exactly one BNC cable, **card #1
+SDI 1 → card #1 SDI 2** — both ports free, nothing to unplug.
+
+**Phase 2 helper (`latticeout`) is built and verified on hardware**: universal
+arm64+x86_64, links only CoreFoundation and Accelerate.
+
+| Check | Result |
+|---|---|
+| 1080p59.94, UYVY via vImage, 65 s | 3896/3896 frames, 0 late, 0 dropped |
+| Two simultaneous 1080p59.94 outputs, 65 s | both 3896/3896, 0 late, 0 dropped |
+| 1080p30, native BGRA, 8 s | 238/240, 0 late, 0 dropped |
+| Enumeration + naming | 8 devices, matches ground truth |
+| Refuses to open output on a receiving port | exits 3 |
+
+The 60fps UYVY conversion holding frame rate closes the main open risk in
+decision 4.
+
+**Still unproven — and it is the actual Phase 2 gate:** that the pixels leaving
+the connector are the pixels we sent. Everything above is what the card reports
+about its own scheduling. 1:1 pixel-exactness, Gray Steps crush/clip and the
+legal-vs-full range answer all remain blocked on the loopback cable.
+`tools/loopscan.cpp` already does content-correlated capture-and-compare.
+
+**Bug worth remembering (same class as the two silent failures already fixed in
+Lattice):** `bmdDeckLinkStatusVideoInputSignalLocked` queried cold is always
+false — it only means anything once video input is enabled and streaming. The
+port-safety guard therefore reported "no signal" on every port including four
+known-receiving ones, and would never have fired. Fixed by enabling input to
+sample, with the settle time raised 900 ms → 1.6 s (at 900 ms only one of four
+receiving ports had locked).
+
+## 5c. Open question before Phase 3: sub-device pairing
+
+One unreproduced observation: transmitting on card #2 SDI 3 caused SDI 4 to lose
+its input signal entirely, while the reverse did not. This may be the same
+phenomenon as the `ProfileFourCC = '2dhd'` in the prefs plist that was dismissed
+in Phase 0 as contradicting the API's four enumerating sub-devices.
+
+**This must be pinned down before the UI exposes eight outputs**, because the
+whole "8 sub-devices = 8 processor feeds" design in decision 2 assumes the ports
+are independent. If connectors pair in the active profile, a Duo 2 gives fewer
+usable simultaneous outputs than it enumerates, and starting one Lattice output
+could disturb a neighbouring port.
+
+Investigate via the API rather than the plist:
+
+- `IDeckLinkProfileManager` / `IDeckLinkProfile` — read the **active** profile
+  and enumerate the available ones per card.
+- Duo 2 profiles pair connectors in the duplex configurations; the one we want
+  is four sub-devices half-duplex, which the four enumerating sub-devices
+  suggest is already active. If it is, the interference needs another
+  explanation — try to reproduce it deterministically (transmit on 3, sample 4,
+  repeat; then all other ordered pairs) before assuming pairing.
+- If reproducible, record which pairs interact and either constrain the UI to
+  the safe set or set the profile explicitly at start-up.
+
+## 5d. SDK headers and packaging — confirmed
+
+**Do not vendor Blackmagic's SDK headers into the repo.** They sit behind a
+registration wall with their own licence. The `DECKLINK_SDK` build variable plus
+documentation is the right call.
+
+Consequence for the release pipeline, to be settled at Phase 5: the build
+machine has no SDK, so it cannot compile the helper. Expected shape — the helper
+is built once per platform on a machine that has the SDK and bundled as a
+prebuilt binary (electron-builder `extraResources`) or attached as a release
+asset, with Lattice detecting its absence and simply not offering DeckLink
+outputs. That satisfies §3 constraint 2 either way.
+
 ## 6. What to report back
 
 1. Hardware/driver/OS specifics from Phase 0.
