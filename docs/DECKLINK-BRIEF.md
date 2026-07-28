@@ -303,6 +303,68 @@ Investigate via the API rather than the plist:
 - If reproducible, record which pairs interact and either constrain the UI to
   the safe set or set the profile explicitly at start-up.
 
+### 5c resolved — the ports ARE independent
+
+The pairing hypothesis is **refuted**; the original sighting was a measurement
+artefact. Control-vs-test trials across every ordered pair:
+
+| Settle | Result |
+|---|---|
+| 900 ms | sporadic failures, control clean |
+| 1200 ms | sporadic failures **including the control row** (an input dropped with nobody transmitting) |
+| 1600 / 2000 ms | 100 %, every ordered pair, identical to control |
+
+An input dropping out while nothing transmits rules transmission out as the
+cause, and the original observation came from `loopscan`, which used exactly
+1200 ms. Re-reading the two original runs corroborates it independently: the
+interference appeared in run 1 but not run 2, and run 2 showed a card #1 →
+card #2 dropout that connector pairing cannot explain at all.
+
+**"8 sub-devices = 8 processor feeds" therefore holds and the Phase 3 UI needs
+no constraining.** `loopscan`'s settle was raised 1200 → 2200 ms, since a false
+negative there would have read as "the loopback isn't working".
+
+**Constraint that generalises — no fixed settle constants anywhere.** The margin
+between flaky and clean is ~400 ms and will move with signal type and driver
+version. Poll for lock with a timeout, or drive off the input format-changed
+callback. `latticeout`'s 1.6 s enumeration sleep is the same fragile pattern and
+should be replaced when the frame transport goes in.
+
+The `IDeckLinkProfileManager` readout could not be done: that interface arrived
+in **SDK 11.0** and is absent from the 10.11.2 headers vendored by macadam,
+which is all the machine has. Declining to hand-declare an interface with a
+guessed IID was the right call. It is now confirmation rather than new
+information — "which ports actually interfere" is what Phase 3 needed, and the
+empirical answer is better evidence than the nominal profile.
+
+## 5e. Phase 3 — authorised, with these constraints
+
+1. **Missing helper is a normal state**, not an error: no binary, no driver, or
+   no card means Lattice simply offers no DeckLink outputs and behaves exactly
+   as it does today. This is §3 constraint 2 and is not negotiable.
+2. **No fixed sleeps** in device enumeration or start-up — see above.
+3. **Reuse the existing output card UI.** A DeckLink output gets the same
+   controls as any other: label, wall assignment, scale mode, Pos X/Y, Crop X/Y
+   in 1:1. Do not invent a parallel control surface.
+4. **Naming:** card model + sub-device index ("DeckLink Duo 2 — SDI 3"), never
+   the stored `CardInfoLabel`.
+5. **Per-output video mode picker** with a chroma-subsampling warning at
+   1080p50/59.94/60 (decision 3).
+6. **Keep the port-safety guard.** Never open output on a sub-device that is
+   receiving; surface why rather than failing silently.
+7. **Helper lifecycle must not take Lattice down.** A crashed or exiting helper
+   should surface an actionable message and allow restart — model it on the
+   updater's failure handling, which now reports the reason and offers a
+   fallback rather than dying quietly.
+8. **No regression:** the renderer holds 60 fps on two simultaneous 4K outputs
+   today. Measure before and after.
+
+Open design question, your call with reasoning: **one helper process per output,
+or one helper managing all devices?** Per-output gives crash isolation and
+simpler shared-memory ownership; a single helper has less process overhead and
+you have already proven two concurrent outputs work inside one process. Lean
+per-output for isolation unless measurement says otherwise.
+
 ## 5d. SDK headers and packaging — confirmed
 
 **Do not vendor Blackmagic's SDK headers into the repo.** They sit behind a
