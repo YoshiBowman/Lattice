@@ -377,10 +377,11 @@ function onDeckLinkStatus(id, status) {
   if (status.state === 'error') notifyControl('active-outputs-changed', null);
 }
 
-ipcMain.handle('start-decklink-output', (e, id, deviceIndex, mode, range) => {
+ipcMain.handle('start-decklink-output', (e, id, deviceIndex, mode, range, level) => {
   if (!decklink) return { ok: false, error: 'DeckLink support is not available in this build.' };
   try {
-    return decklink.startOutput(String(id), deviceIndex | 0, String(mode), String(range || 'legal'), onDeckLinkStatus);
+    return decklink.startOutput(String(id), deviceIndex | 0, String(mode),
+                                String(range || 'legal'), String(level || 'b'), onDeckLinkStatus);
   } catch (err) {
     return { ok: false, error: err.message };
   }

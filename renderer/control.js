@@ -665,6 +665,7 @@ function dlCfgFor(dev) {
   const oc = outCfgFor(dlOutputId(dev));
   if (!oc.dlMode) oc.dlMode = '1080p59.94';
   if (!oc.dlRange) oc.dlRange = 'legal';
+  if (!oc.dlLevel) oc.dlLevel = 'b';
   // SDI cannot rescale: 1:1 with Crop X/Y is the primary path for mapping a
   // larger wall across several feeds (brief §5a decision 2).
   if (!oc.dlInit) { oc.mode = '1to1'; oc.dlInit = true; }
@@ -728,7 +729,7 @@ function renderDeckLink() {
       if (active) window.ledwall.stopDeckLinkOutput(id);
       else {
         deckLinkStatus.delete(id);
-        window.ledwall.startDeckLinkOutput(id, dev.index, oc.dlMode, oc.dlRange).then((r) => {
+        window.ledwall.startDeckLinkOutput(id, dev.index, oc.dlMode, oc.dlRange, oc.dlLevel).then((r) => {
           if (r && r.ok === false) {
             deckLinkStatus.set(id, { state: 'error', error: r.error });
             renderDeckLink();
@@ -767,6 +768,22 @@ function renderDeckLink() {
       'RGB conversion only ever produces legal range.';
     rangeSel.addEventListener('change', () => { oc.dlRange = rangeSel.value; push(); });
     ctl.appendChild(field('Colour range', rangeSel));
+
+    // 3G-SDI only (1080p50/59.94/60). Below that it is 1.5G HD-SDI and the
+    // mapping question does not arise, so the control is shown but inert.
+    const levelSel = document.createElement('select');
+    for (const [v, l] of [['b', 'Level B (default)'], ['a', 'Level A']]) {
+      const opt = document.createElement('option');
+      opt.value = v; opt.textContent = l;
+      levelSel.appendChild(opt);
+    }
+    levelSel.value = oc.dlLevel;
+    levelSel.disabled = active;
+    levelSel.title = 'How 1080p50/59.94/60 is mapped onto 3G-SDI. The card defaults to ' +
+      'Level B; many LED processors only accept Level A and will report "no signal" otherwise. ' +
+      'No effect below 1080p50.';
+    levelSel.addEventListener('change', () => { oc.dlLevel = levelSel.value; push(); });
+    ctl.appendChild(field('3G-SDI level', levelSel));
 
     appendOutputControls(ctl, id, oc, name);
 

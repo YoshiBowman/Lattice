@@ -95,11 +95,12 @@ function modeById(id) {
 const active = new Map();   // outputId -> Session
 
 class Session {
-  constructor(id, deviceIndex, mode, range, onStatus) {
+  constructor(id, deviceIndex, mode, range, level, onStatus) {
     this.id = id;
     this.deviceIndex = deviceIndex;
     this.mode = mode;
     this.range = range;
+    this.level = level;
     this.onStatus = onStatus;
     this.win = null;
     this.child = null;
@@ -138,6 +139,11 @@ class Session {
       // silently ignored. Forcing our own vImage conversion is the only way to
       // actually produce full range, so ask for it whenever full is selected.
       if (this.range === 'full') args.push('--yuv');
+      // 3G-SDI (1080p50/59.94/60) has two incompatible mappings. The card
+      // defaults to Level B; many LED processors only lock to Level A, and the
+      // symptom is a downstream device reporting "no signal" while the card
+      // transmits perfectly and another DeckLink receives it fine.
+      if (this.level === 'a') args.push('--level-a');
       this.child = spawn(bin, args, { stdio: ['ignore', 'pipe', 'pipe'] });
 
       let errText = '';
@@ -247,9 +253,9 @@ class Session {
   }
 }
 
-function startOutput(id, deviceIndex, mode, range, onStatus) {
+function startOutput(id, deviceIndex, mode, range, level, onStatus) {
   if (active.has(id)) return { ok: true };
-  const s = new Session(id, deviceIndex, mode, range, onStatus);
+  const s = new Session(id, deviceIndex, mode, range, level, onStatus);
   active.set(id, s);
   const res = s.start();
   if (!res.ok) active.delete(id);

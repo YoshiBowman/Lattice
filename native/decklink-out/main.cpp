@@ -24,6 +24,7 @@
 #include <vector>
 #include <unistd.h>
 #include "DeckLinkAPI.h"
+#include "DeckLinkAPIConfiguration.h"
 
 // ---------------------------------------------------------------- utilities
 
@@ -280,6 +281,28 @@ private:
     std::atomic<ULONG> ref{1};
 };
 
+// At 1080p50/59.94/60 the signal is 3G-SDI, which has two incompatible
+// mappings: Level A (direct) and Level B-DL (dual-link mapped into one 3G
+// stream). The card defaults to Level B, but a great many LED processors and
+// older monitors only lock to Level A — the symptom is a downstream device that
+// reports "no signal" while the card is transmitting perfectly and another
+// DeckLink receives it without complaint.
+//
+// Below 1080p50 this is 1.5G HD-SDI and the setting is irrelevant, so it is
+// applied but harmless.
+static bool setLevelA(IDeckLink* dl, bool levelA, bool* applied) {
+    *applied = false;
+    IDeckLinkConfiguration* cfg = NULL;
+    if (dl->QueryInterface(IID_IDeckLinkConfiguration, (void**)&cfg) != S_OK || !cfg) return false;
+    const bool ok = (cfg->SetFlag(bmdDeckLinkConfigSMPTELevelAOutput, levelA) == S_OK);
+    if (ok) {
+        bool readback = false;
+        if (cfg->GetFlag(bmdDeckLinkConfigSMPTELevelAOutput, &readback) == S_OK) *applied = (readback == levelA);
+    }
+    cfg->Release();
+    return ok;
+}
+
 // ------------------------------------------------------------ frame streaming
 
 // Receives BGRA frames from Lattice over a unix socket into a small rotating
@@ -409,7 +432,7 @@ private:
 };
 
 static int cmdStream(int index, const std::string& modeName, bool legalRange,
-                     bool forceYUV, bool force, const std::string& sockPath) {
+                     bool forceYUV, bool force, const std::string& sockPath, bool levelA) {
     auto devs = enumerate();
     if (index < 0 || index >= (int)devs.size()) { fprintf(stderr, "device index out of range\n"); return 1; }
     if (!force) probeInputSignals(devs, { index });
@@ -451,6 +474,9 @@ static int cmdStream(int index, const std::string& modeName, bool legalRange,
     }
     if (!W || !ts) { fprintf(stderr, "could not resolve mode geometry\n"); out->Release(); return 1; }
 
+    bool levelApplied = false;
+    setLevelA(d.dl, levelA, &levelApplied);
+
     Converter conv;
     const bool needConv = (pf == bmdFormat8BitYUV);
     if (needConv && !conv.init(legalRange)) { fprintf(stderr, "vImage setup failed\n"); out->Release(); return 1; }
@@ -485,10 +511,12 @@ static int cmdStream(int index, const std::string& modeName, bool legalRange,
 
     // Machine-readable so Lattice can surface health without scraping prose.
     printf("{\"event\":\"ready\",\"device\":\"%s\",\"mode\":\"%s\",\"width\":%d,\"height\":%d,"
-           "\"fps\":%.3f,\"pixelFormat\":\"%s\",\"subsampled\":%s,\"range\":\"%s\"}\n",
+           "\"fps\":%.3f,\"pixelFormat\":\"%s\",\"subsampled\":%s,\"range\":\"%s\","
+           "\"sdiLevel\":\"%s\",\"sdiLevelApplied\":%s}\n",
            d.uiName.c_str(), modeName.c_str(), W, H, (double)ts / (double)dur,
            needConv ? "8BitYUV" : "8BitBGRA", needConv ? "true" : "false",
-           legalRange ? "legal" : "full");
+           legalRange ? "legal" : "full",
+           levelA ? "A" : "B", levelApplied ? "true" : "false");
     fflush(stdout);
 
     for (int i = 0; i < kRing; i++) sched.pushNext();
@@ -703,7 +731,7 @@ int main(int argc, char** argv) {
     }
     if (cmd == "stream") {
         int index = 0; std::string mode = "1080p59.94", sock;
-        bool legal = true, forceYUV = false, force = false;
+        bool legal = true, forceYUV = false, force = false, levelA = false;
         for (int i = 2; i < argc; i++) {
             std::string a = argv[i];
             auto next = [&]() -> std::string { return (i + 1 < argc) ? argv[++i] : ""; };
@@ -713,9 +741,10 @@ int main(int argc, char** argv) {
             else if (a == "--range")  legal = (next() != "full");
             else if (a == "--yuv")    forceYUV = true;
             else if (a == "--force")  force = true;
+            else if (a == "--level-a") levelA = true;
         }
         if (sock.empty()) { fprintf(stderr, "stream requires --socket PATH\n"); return 1; }
-        return cmdStream(index, mode, legal, forceYUV, force, sock);
+        return cmdStream(index, mode, legal, forceYUV, force, sock, levelA);
     }
     fprintf(stderr,
         "latticeout — DeckLink SDI output helper\n\n"
