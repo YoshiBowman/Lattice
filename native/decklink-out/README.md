@@ -48,25 +48,70 @@ Measured on 2 × DeckLink Duo 2, Desktop Video 16.1, macOS 26.5.1 arm64.
 | 1080p59.94 motion, 65s | 3896/3896 frames, 0 late, 0 dropped |
 | Two simultaneous 1080p59.94 outputs, 65s | both 3896/3896, 0 late, 0 dropped |
 
-**NOT yet verified — needs one BNC cable:**
+## The byte-exact gate — PASSED
 
-The Phase 2 gate proper ("known test frame visibly on the downstream device,
-correct colours") is **unproven**. Nothing is connected to card #1's four SDI
-ports, and card #2's four are fed inward by external sources, so there is no
-return path. Everything above measures what the card *reports* about its own
-scheduling; none of it confirms the pixels leaving the connector are the pixels
-we sent.
+Run through the Videohub loopback (card #1 SDI 1 → hub → card #2 SDI 1) with
+`tools/gate.cpp`, which transmits a known pattern and compares captured pixels.
+An SDI router is a bit-transparent crosspoint, so this is still byte-exact.
 
-Outstanding as a direct consequence:
+| Check | 1080p59.94 legal | 1080p30 legal | full range |
+|---|---|---|---|
+| Black / white level | Y=16 / Y=235 | Y=16 / Y=234 | Y=1 / Y=254 |
+| Gray Steps (16) | all distinct, monotonic, no crush or clip | same | same |
+| 1px grid at 1:1 | **120/120 lines, 0 neighbour bleed** | same | same |
+| Chroma (1px red/blue) | Cr swing **0** | Cr swing **0** | — |
 
-- pixel-exactness of the 1px grid at 1:1
-- Gray Steps black-crush / white-clip, i.e. the actual colour-range answer
-- whether legal (16–235) or full (0–255) range is what a downstream LED
-  processor wants — which a loopback cannot answer even once cabled (§5a
-  decision 1); that needs a real processor or reference monitor
+**1:1 is genuinely pixel-exact in luma** — every 1px line recovered at the right
+column with no spreading.
 
-To close these: connect **card #1 SDI 1 → card #1 SDI 2** and run
-`tools/loopscan.cpp`, which already does content-correlated capture and compare.
+**Two corrections to earlier conclusions, both measured:**
+
+1. **Chroma is 4:2:2 in *every* mode, not just 1080p50/59.94/60.** Handing the
+   card BGRA does not put 4:4:4 on the wire; it only moves the RGB→YUV
+   conversion into the card. The Phase 0 pixel-format table showed which modes
+   *accept* an RGB buffer, and reading that as "4:4:4 available" was an
+   inference, not a measurement. §5a decision 3's premise — pick 1080p30 for
+   colour-critical work — does not hold: no available mode avoids 4:2:2.
+   True 4:4:4 needs 444 output enabled on both ends.
+
+2. **The colour-range control silently did nothing in BGRA modes.** The card's
+   built-in RGB→YUV conversion always emits legal range and ignores the setting;
+   selecting "full" at 1080p30 still measured Y=16/234. Fixed by forcing the
+   vImage path whenever full range is selected, then re-verified: 1080p30 full
+   now measures Y=1/254 with 16 distinct steps.
+
+**Still open — loopback cannot answer it:** which range a downstream LED
+processor actually expects. That needs routing onward to a processor or
+reference monitor (§5a decision 1).
+
+## Transport scaling (§5f step 1)
+
+Measured end-to-end, offscreen → socket → card, 1080p59.94:
+
+| Outputs | Pattern | Paint | Received | Card |
+|---|---|---|---|---|
+| 4 | static (grid) | 0 fps steady | **~0 fps, ~16 frames total in 25 s** | 0 late, 0 dropped |
+| 1 | animated | 60 fps | 60 fps, 0 skipped | 0 late, 0 dropped |
+| 2 | animated | 60 fps | 47 fps, 285 skipped each | 0 late, 0 dropped |
+| 4 | animated | 60 fps | 24 fps, ~750 skipped each | 0 late, ≤1 dropped |
+
+**Static outputs cost essentially nothing at any count** — Chromium OSR paints on
+invalidation, `output.js` skips the rAF loop when the pattern is not animated,
+and the helper holds the last frame. The socket only fails for *multiple
+simultaneous animated* outputs, where it saturates around 800 MB/s aggregate.
+The renderer itself holds 60 fps paint throughout; the ceiling is transport
+alone.
+
+Only four outputs were measurable: card #2 is the input card, so its four
+sub-devices are not available as outputs.
+
+**NOT verified:**
+
+- Which colour range a downstream LED processor expects. Loopback cannot settle
+  it; that needs routing onward to a processor or reference monitor.
+- The shared-memory transport (§5f steps 2–3), needed only for multiple
+  simultaneous *animated* outputs.
+- The no-regression check on the existing renderer with two 4K outputs.
 
 ## Sub-device pairing (§5c) — resolved, ports are independent
 
@@ -123,9 +168,12 @@ harness, not throwaways.
 - `pairtest.cpp` — repeated control-vs-test trials used to settle §5c.
   `--trials N --settle MS`.
 
-Because an idle output radiates black, the passive scan doubles as a cable
-detector: with a loopback fitted, the receiving port shows signal even before
-anything is deliberately transmitted.
+**A passive scan is NOT a cable detector.** An SDI output cabled to a downstream
+device is indistinguishable from an unconnected one: there is no incoming signal
+either way and the card cannot sense a passive load. These tools detect incoming
+*feeds*, never cables. An earlier claim to the contrary here was wrong, and led
+to card #1 being reported as "nothing plugged in" when its four ports were in
+fact already feeding a Videohub.
 
 Build either the same way as the helper:
 

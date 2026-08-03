@@ -19,7 +19,7 @@ const config = {
   walls: [{ id: wallId, name: 'Test wall', width: 1920, height: 1080, panelW: 128, panelH: 128,
             cabling: { signal: { runs: [], prefix: 'Port' }, power: { runs: [], prefix: 'Circuit' } } }],
   outputs: {},
-  pattern: { type: 'motion', fg: '#ffffff', bg: '#000000', size: 16, speed: 2, gradMode: 'gray-h', dir: 'h' },
+  pattern: { type: process.env.DL_PATTERN || 'motion', fg: '#ffffff', bg: '#000000', size: 16, speed: 2, gradMode: 'gray-h', dir: 'h' },
   overlay: { type: 'none' },
   readout: { image: null },
   cablingLayer: 'signal',

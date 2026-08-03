@@ -59,20 +59,24 @@ function listDevices() {
   });
 }
 
-// Modes offered per output. `subsampled` drives the UI warning: at these rates
-// the Duo 2 refuses BGRA and the frame is carried as YUV 4:2:2, so coloured
-// single-pixel detail is not pixel-exact (brief §5a decision 3).
+// Modes offered per output.
+//
+// `nativeBGRA` records only which modes the card will accept an RGB buffer for
+// — NOT whether the SDI wire carries 4:4:4. Measured through the Videohub
+// loopback, chroma is 4:2:2 in every mode including the BGRA ones: handing the
+// card BGRA just moves the RGB->YUV conversion into the card. True 4:4:4 needs
+// 444 output enabled on both ends and is not offered here.
 const MODES = [
-  { id: '1080p59.94', label: '1080p59.94', width: 1920, height: 1080, fps: 59.94, subsampled: true },
-  { id: '1080p60',    label: '1080p60',    width: 1920, height: 1080, fps: 60,    subsampled: true },
-  { id: '1080p50',    label: '1080p50',    width: 1920, height: 1080, fps: 50,    subsampled: true },
-  { id: '1080p30',    label: '1080p30',    width: 1920, height: 1080, fps: 30,    subsampled: false },
-  { id: '1080p29.97', label: '1080p29.97', width: 1920, height: 1080, fps: 29.97, subsampled: false },
-  { id: '1080p25',    label: '1080p25',    width: 1920, height: 1080, fps: 25,    subsampled: false },
-  { id: '1080p24',    label: '1080p24',    width: 1920, height: 1080, fps: 24,    subsampled: false },
-  { id: '720p59.94',  label: '720p59.94',  width: 1280, height: 720,  fps: 59.94, subsampled: false },
-  { id: '720p60',     label: '720p60',     width: 1280, height: 720,  fps: 60,    subsampled: false },
-  { id: '720p50',     label: '720p50',     width: 1280, height: 720,  fps: 50,    subsampled: false },
+  { id: '1080p59.94', label: '1080p59.94', width: 1920, height: 1080, fps: 59.94, nativeBGRA: false },
+  { id: '1080p60',    label: '1080p60',    width: 1920, height: 1080, fps: 60,    nativeBGRA: false },
+  { id: '1080p50',    label: '1080p50',    width: 1920, height: 1080, fps: 50,    nativeBGRA: false },
+  { id: '1080p30',    label: '1080p30',    width: 1920, height: 1080, fps: 30,    nativeBGRA: true },
+  { id: '1080p29.97', label: '1080p29.97', width: 1920, height: 1080, fps: 29.97, nativeBGRA: true },
+  { id: '1080p25',    label: '1080p25',    width: 1920, height: 1080, fps: 25,    nativeBGRA: true },
+  { id: '1080p24',    label: '1080p24',    width: 1920, height: 1080, fps: 24,    nativeBGRA: true },
+  { id: '720p59.94',  label: '720p59.94',  width: 1280, height: 720,  fps: 59.94, nativeBGRA: true },
+  { id: '720p60',     label: '720p60',     width: 1280, height: 720,  fps: 60,    nativeBGRA: true },
+  { id: '720p50',     label: '720p50',     width: 1280, height: 720,  fps: 50,    nativeBGRA: true },
 ];
 
 function modeById(id) {
@@ -128,6 +132,11 @@ class Session {
     this.server.listen(this.sockPath, () => {
       const args = ['stream', '--device', String(this.deviceIndex), '--mode', m.id,
                     '--socket', this.sockPath, '--range', this.range === 'full' ? 'full' : 'legal'];
+      // Measured: when the card is handed BGRA it applies its own fixed
+      // RGB->YUV matrix, which is always legal range — the range setting is
+      // silently ignored. Forcing our own vImage conversion is the only way to
+      // actually produce full range, so ask for it whenever full is selected.
+      if (this.range === 'full') args.push('--yuv');
       this.child = spawn(bin, args, { stdio: ['ignore', 'pipe', 'pipe'] });
 
       let errText = '';

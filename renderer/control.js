@@ -744,7 +744,7 @@ function renderDeckLink() {
     for (const mm of deckLinkInfo.modes) {
       const opt = document.createElement('option');
       opt.value = mm.id;
-      opt.textContent = mm.label + (mm.subsampled ? ' (4:2:2)' : '');
+      opt.textContent = mm.label;
       modeSel.appendChild(opt);
     }
     modeSel.value = oc.dlMode;
@@ -761,7 +761,9 @@ function renderDeckLink() {
     }
     rangeSel.value = oc.dlRange;
     rangeSel.disabled = active;
-    rangeSel.title = 'SDI convention is legal range; many LED processors expect full range';
+    rangeSel.title = 'SDI convention is legal range (16–235); many LED processors expect full (0–255). ' +
+      'Full range forces Lattice\'s own colour conversion, because the card\'s built-in ' +
+      'RGB conversion only ever produces legal range.';
     rangeSel.addEventListener('change', () => { oc.dlRange = rangeSel.value; push(); });
     ctl.appendChild(field('Colour range', rangeSel));
 
@@ -769,14 +771,17 @@ function renderDeckLink() {
 
     card.append(head, ctl);
 
-    if (m.subsampled) {
-      const warn = document.createElement('div');
-      warn.className = 'hint';
-      warn.textContent = `${m.label} carries YUV 4:2:2 — the card refuses RGB at this rate. ` +
-        'Luma patterns (grid, Panel Map, Checkerboard, Gray Steps) are unaffected; ' +
-        'coloured single-pixel detail and Colour Bars are not pixel-exact. Use 1080p30 or 720p60 for those.';
-      card.appendChild(warn);
-    }
+    // Measured through an SDI loopback: chroma is 4:2:2 in EVERY mode, not just
+    // the high frame rates. Feeding the card RGB only moves the RGB->YUV
+    // conversion into the card; it does not put 4:4:4 on the wire. Said once
+    // per card rather than as a per-mode warning, because no mode escapes it.
+    const chroma = document.createElement('div');
+    chroma.className = 'hint';
+    chroma.textContent = 'SDI carries YUV 4:2:2 in all modes: luma detail (grid, Panel Map, ' +
+      'Checkerboard, Gray Steps) is pixel-exact — verified 1px lines with no bleed — but ' +
+      'horizontal colour detail is halved, so coloured single-pixel features and Colour Bars ' +
+      'edges are not. No available mode avoids this.';
+    card.appendChild(chroma);
     if (oc.mode !== '1to1') {
       const warn = document.createElement('div');
       warn.className = 'hint';
