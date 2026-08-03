@@ -28,6 +28,7 @@ const config = {
 const last = new Map();
 function onStatus(id, s) {
   if (s.state === 'error') console.log(`[status ${id}] ERROR: ${s.error}`);
+  else if (s.state === 'stopped') console.log(`[status ${id}] STOPPED (renderer notified)`);
   else if (s.info) console.log(`[status ${id}] ready:`, JSON.stringify(s.info));
   else if (s.stats) { last.set(id, s.stats); console.log(`[status ${id}]`, JSON.stringify(s.stats)); }
 }

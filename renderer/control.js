@@ -654,6 +654,7 @@ function renderVirtuals() {
 
 let deckLinkInfo = { available: false, devices: [], modes: [] };
 let deckLinkActive = new Set();
+let deckLinkRescan = null;
 const deckLinkStatus = new Map();   // output id -> { state, error, stats }
 
 // A DeckLink output's config key is stable across restarts: it is tied to the
@@ -1782,6 +1783,15 @@ async function init() {
     // Stats arrive every second; only re-render on a state change to avoid
     // rebuilding the cards (and stealing focus) sixty times a minute.
     if (!s.stats) renderDeckLink();
+    // Whether a port is receiving can change at any time — a router being
+    // re-patched, a source being powered up — so an enumeration taken at
+    // launch goes stale and Start can look available on a port that is now
+    // busy. A refusal is the signal to re-read the real state. Debounced
+    // because starting several outputs at once produces a burst of these.
+    if (s.state === 'error') {
+      clearTimeout(deckLinkRescan);
+      deckLinkRescan = setTimeout(refreshDeckLink, 400);
+    }
   });
 
   window.LED_ON_IMAGE_READY(() => startPreview()); // re-render once the logo decodes

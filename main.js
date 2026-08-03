@@ -68,6 +68,17 @@ function createControl() {
   controlWin.loadFile(path.join(__dirname, 'renderer', 'control.html'));
   controlWin.on('closed', () => { controlWin = null; app.quit(); });
   controlWin.webContents.once('did-finish-load', () => console.log('[main] control window ready'));
+
+  // Renderer faults used to be invisible from the terminal, which made a frozen
+  // control window undiagnosable after the fact. An uncaught error here stops
+  // the UI updating while every process sits at 0% CPU, looking like a hang.
+  controlWin.webContents.on('console-message', (_e, level, message, line, sourceId) => {
+    if (level >= 2) console.log(`[control:${level === 3 ? 'error' : 'warn'}] ${message} (${sourceId}:${line})`);
+  });
+  controlWin.on('unresponsive', () => console.log('[main] control window reported unresponsive'));
+  controlWin.webContents.on('render-process-gone', (_e, details) => {
+    console.log(`[main] control renderer gone: ${details.reason} (exit ${details.exitCode})`);
+  });
 }
 
 function createOutput(display) {

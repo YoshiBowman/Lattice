@@ -111,6 +111,7 @@ class Session {
     this.sentFrames = 0;
     this.skipped = 0;
     this.stopping = false;
+    this.failed = false;
   }
 
   start() {
@@ -221,6 +222,7 @@ class Session {
   fail(reason) {
     if (this.stopping) return;
     console.log(`[decklink] output ${this.id} stopped: ${reason}`);
+    this.failed = true;
     this.onStatus(this.id, { state: 'error', error: reason });
     this.stop();
   }
@@ -234,6 +236,14 @@ class Session {
     try { fs.unlinkSync(this.sockPath); } catch (_) {}
     this.conn = null; this.child = null; this.server = null; this.win = null;
     active.delete(this.id);
+    // The child's exit handler stays silent once `stopping` is set, so without
+    // this the renderer is never told the output ended: the card keeps showing
+    // "Stop" and pressing it does nothing visible even though the helper really
+    // did stop. Suppressed after fail(), which has already reported a reason
+    // that would otherwise be overwritten and lost from the card.
+    if (!this.failed) {
+      try { this.onStatus(this.id, { state: 'stopped' }); } catch (_) {}
+    }
   }
 }
 
