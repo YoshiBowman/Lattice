@@ -64,6 +64,15 @@ An SDI router is a bit-transparent crosspoint, so this is still byte-exact.
 **1:1 is genuinely pixel-exact in luma** — every 1px line recovered at the right
 column with no spreading.
 
+**Independently corroborated by eye:** the test output was observed on a monitor
+fed from the Videohub. This matters beyond "it works". A loopback runs through
+two sub-devices of the same card family on the same driver, so a *symmetric*
+fault — transmit and capture sharing the same wrong matrix or offset — would
+cancel out and produce a clean round trip from a wrong signal. Confirmation on a
+non-DeckLink device rules that out. It also closes the original Phase 1 gate
+("any picture out of the card"), which no amount of software could settle from
+this machine.
+
 **Two corrections to earlier conclusions, both measured:**
 
 1. **Chroma is 4:2:2 in *every* mode, not just 1080p50/59.94/60.** Handing the
