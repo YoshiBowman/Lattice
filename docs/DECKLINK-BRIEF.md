@@ -243,12 +243,65 @@ first appears to be — see decision 2.
 
 ## 5b. Phase 1/2 outcome (measured on the hardware machine)
 
-**Cabling, established by content-correlated matrix scan of all 56 ordered port
-pairs, twice:** card #1's four BNCs are unconnected; card #2's four all receive
-external signal at 1080i59.94 (SDI 4 carrying live moving content). **Zero
-loopback pairs.** The Duo 2 has no internal loop-through, so no software setting
-creates a return path. Unblocking Phase 1 needs exactly one BNC cable, **card #1
-SDI 1 → card #1 SDI 2** — both ports free, nothing to unplug.
+**Cabling — CORRECTED 2026-08-03 by the operator. Read the correction before
+the measurement.**
+
+The matrix scan of all 56 ordered port pairs found: no incoming signal on any of
+card #1's ports, live external signal at 1080i59.94 on all four of card #2's
+(SDI 4 carrying moving content), and zero loopback pairs.
+
+That was over-interpreted as "card #1's BNCs are unconnected". **Both cards are
+in fact cabled.** Card #2 is the input card, fed by external sources. Card #1 is
+the **output card, and its four ports already run to downstream devices.**
+
+**The blind spot to remember: an SDI output port with a cable running downstream
+is indistinguishable from an empty port.** The card sees no incoming signal
+either way and cannot sense a passive load at the far end. "No signal received"
+means nothing is *feeding* the port — never that nothing is *attached* to it.
+The passive scan is therefore a detector for incoming feeds only, not for
+cables, and the "reliable cable detector" claim in the earlier session was
+wrong.
+
+Consequences, in order of importance:
+
+1. **Phase 1's gate may already be satisfiable with no new cable at all.** Card
+   #1's outputs are idle (radiating black, so nothing else is driving them) and
+   already connected to something. Transmitting a test pattern and having the
+   operator look at whatever those cables feed satisfies "a picture on the
+   downstream device" today.
+2. **If those cables reach an LED processor or wall, that is strictly more
+   valuable than the loopback**, because it answers the legal-vs-full range
+   question that §5a decision 1 says loopback can never settle.
+3. **Ask before transmitting.** Anything sent on card #1 now lands on real
+   downstream equipment. Establish what is on the far end first. (Note: the
+   topology scans already transmitted mid-grey on these ports.)
+4. The byte-exact loopback is still worth having for pixel-exactness, but it now
+   requires temporarily borrowing a port — either freeing one of card #1's
+   outputs to loop back into another, or freeing one of card #2's inputs to
+   receive from card #1 — rather than plugging in a spare cable.
+
+### The return path exists already — via the Videohub
+
+**Both cards land on a Blackmagic Videohub**: card #1's outputs feed hub inputs,
+card #2's inputs come from hub outputs. **Routing a card #1 source to a card #2
+destination creates the loopback in software, with no recabling.** This is
+better than a direct BNC jumper — the signal traverses the real show path, and
+an SDI router is a bit-transparent crosspoint, so the byte-exact comparison
+still holds.
+
+- Start with **one pair** to prove the path (card #1 SDI 1 → card #2 SDI 1),
+  then extend to the rest.
+- Note what is being displaced: card #2's inputs currently carry live external
+  signal, one with moving content. Confirm before overwriting those routes.
+- **If the Videohub is on the network, automate it.** Blackmagic's Videohub
+  Ethernet Protocol is a plain-text TCP service on **port 9990** — connect and
+  send `VIDEO OUTPUT ROUTING:\n<output> <input>\n\n`. That makes the whole
+  verification matrix scriptable: route, transmit, capture, compare, re-route,
+  unattended. Worth building into the harness rather than driving the hub by
+  hand.
+- Once the card's output is proven byte-exact, **routing it onward to an LED
+  processor or the wall answers the legal-vs-full range question** that
+  loopback alone can never settle (§5a decision 1).
 
 **Phase 2 helper (`latticeout`) is built and verified on hardware**: universal
 arm64+x86_64, links only CoreFoundation and Accelerate.
@@ -364,6 +417,54 @@ or one helper managing all devices?** Per-output gives crash isolation and
 simpler shared-memory ownership; a single helper has less process overhead and
 you have already proven two concurrent outputs work inside one process. Lean
 per-output for isolation unless measurement says otherwise.
+
+## 5f. Transport decision (Phase 3)
+
+Measured over a unix socket, offscreen → helper → card, 1080p59.94 BGRA:
+one output clean at 60 fps / 497 MB/s / 0 skipped; **two outputs degrade to 47
+unique fps** with ~285 skipped each. The design target is eight. So the socket
+does not scale, and §5e's shared-memory requirement is now evidence-based.
+
+**Do these in order, measuring after each — the later steps may prove
+unnecessary.**
+
+1. **Measure the STATIC case first.** The transport was characterised with
+   `motion`, an animated pattern, which is the worst case and not the common
+   one. Most test patterns — Grid, Panel Map, Checkerboard, Colour Bars, Gray
+   Steps, Solid — are static, and `renderer/output.js` already skips the rAF
+   loop entirely when `LED_FRAME_ANIMATED()` is false. Chromium OSR paints on
+   invalidation, so a static pattern should produce almost no paints, and the
+   helper already holds the last frame on starvation. **Eight static outputs may
+   already work over the plain socket at effectively zero sustained bandwidth.**
+   If so, the transport rebuild is only needed for multiple *animated* outputs,
+   which changes its priority considerably. Measure eight static outputs, and
+   eight with one animated, before building anything.
+
+2. **Convert to UYVY before the transport** for modes that require it
+   (1080p50/59.94/60). It halves the wire cost — 4.15 MB/frame instead of
+   8.29 — and the conversion is mandatory somewhere anyway. Keep it off the
+   main thread (worker + SharedArrayBuffer) and re-measure the two-output case;
+   it may clear on the socket alone.
+
+3. **Then, if still needed: file-backed mmap. Not a native addon.** Protecting
+   the release pipeline from native dependencies is why route (b) was chosen
+   and that still holds — a native addon reintroduces `electron-rebuild`, the
+   Blackmagic SDK as a build input on the release machine, and per-Electron
+   rebuilds.
+
+   The stated disk cost deserves measurement rather than acceptance. A small
+   ring (3 frames ≈ 25 MB) rewritten at 60 Hz dirties the *same* pages
+   repeatedly; the pager flushes current contents on its own schedule, so
+   actual writeback should be bounded by flush frequency × ring size, not by
+   write rate. That is a reasonable expectation, not a fact — **verify with
+   `fs_usage` / `iostat` before accepting it.** If writeback is genuinely heavy,
+   a RAM disk (`hdiutil attach -nomount ram://…`) removes the concern at the
+   cost of a mount to manage and clean up.
+
+Noted for later, not now: when several outputs show regions of the *same* wall
+(the eight-feeds case), the wall could be rendered once and each helper given
+its own crop, replacing N renderers with one. Worth it only if N-renderer CPU
+shows up as a problem.
 
 ## 5d. SDK headers and packaging — confirmed
 
