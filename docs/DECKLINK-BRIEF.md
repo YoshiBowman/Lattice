@@ -280,6 +280,29 @@ Consequences, in order of importance:
    outputs to loop back into another, or freeing one of card #2's inputs to
    receive from card #1 — rather than plugging in a spare cable.
 
+### The return path exists already — via the Videohub
+
+**Both cards land on a Blackmagic Videohub**: card #1's outputs feed hub inputs,
+card #2's inputs come from hub outputs. **Routing a card #1 source to a card #2
+destination creates the loopback in software, with no recabling.** This is
+better than a direct BNC jumper — the signal traverses the real show path, and
+an SDI router is a bit-transparent crosspoint, so the byte-exact comparison
+still holds.
+
+- Start with **one pair** to prove the path (card #1 SDI 1 → card #2 SDI 1),
+  then extend to the rest.
+- Note what is being displaced: card #2's inputs currently carry live external
+  signal, one with moving content. Confirm before overwriting those routes.
+- **If the Videohub is on the network, automate it.** Blackmagic's Videohub
+  Ethernet Protocol is a plain-text TCP service on **port 9990** — connect and
+  send `VIDEO OUTPUT ROUTING:\n<output> <input>\n\n`. That makes the whole
+  verification matrix scriptable: route, transmit, capture, compare, re-route,
+  unattended. Worth building into the harness rather than driving the hub by
+  hand.
+- Once the card's output is proven byte-exact, **routing it onward to an LED
+  processor or the wall answers the legal-vs-full range question** that
+  loopback alone can never settle (§5a decision 1).
+
 **Phase 2 helper (`latticeout`) is built and verified on hardware**: universal
 arm64+x86_64, links only CoreFoundation and Accelerate.
 
