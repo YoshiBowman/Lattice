@@ -14,6 +14,10 @@
 #include <CoreFoundation/CoreFoundation.h>
 #include <atomic>
 #include <cmath>
+#include <mutex>
+#include <thread>
+#include <sys/socket.h>
+#include <sys/un.h>
 #include <cstdio>
 #include <cstring>
 #include <string>
@@ -121,16 +125,31 @@ static void probeInputSignals(std::vector<Dev>& devs, const std::vector<int>& wh
         in->StartStreams();
         ins[i] = in;
     }
-    usleep(1600 * 1000);   // receivers need time to lock; 900ms was measured too short for 8 at once
+    // Poll for lock rather than sleeping a magic number. A fixed wait is either
+    // too short (900ms and 1200ms both produced false negatives during the §5c
+    // work) or needlessly slow. Ports with nothing plugged in never lock, so the
+    // cap is only paid when some probed port is genuinely idle.
+    const int kPollMs = 50, kCapMs = 3000;
+    int probed = 0;
+    for (size_t i = 0; i < devs.size(); i++) if (ins[i]) probed++;
+    for (int waited = 0; waited < kCapMs; waited += kPollMs) {
+        usleep(kPollMs * 1000);
+        int locked = 0;
+        for (size_t i = 0; i < devs.size(); i++) {
+            if (!ins[i]) continue;
+            IDeckLinkStatus* st = NULL;
+            if (devs[i].dl->QueryInterface(IID_IDeckLinkStatus, (void**)&st) == S_OK) {
+                bool l = false;
+                st->GetFlag(bmdDeckLinkStatusVideoInputSignalLocked, &l);
+                if (l) devs[i].hasSignalIn = true;   // latch: a lock seen is a lock
+                st->Release();
+            }
+            if (devs[i].hasSignalIn) locked++;
+        }
+        if (locked == probed) break;   // everything that can lock has locked
+    }
     for (size_t i = 0; i < devs.size(); i++) {
         if (!ins[i]) continue;
-        IDeckLinkStatus* st = NULL;
-        if (devs[i].dl->QueryInterface(IID_IDeckLinkStatus, (void**)&st) == S_OK) {
-            bool locked = false;
-            st->GetFlag(bmdDeckLinkStatusVideoInputSignalLocked, &locked);
-            devs[i].hasSignalIn = locked;
-            st->Release();
-        }
         ins[i]->StopStreams();
         ins[i]->DisableVideoInput();
         ins[i]->Release();
@@ -260,6 +279,250 @@ public:
 private:
     std::atomic<ULONG> ref{1};
 };
+
+// ------------------------------------------------------------ frame streaming
+
+// Receives BGRA frames from Lattice over a unix socket into a small rotating
+// set of buffers. Receive is decoupled from playback deliberately: SDI needs a
+// frame at the exact mode rate, so the playback callback must never wait on the
+// producer. If a new frame has not arrived, the previous one is repeated; if
+// several arrive within one frame period, the newest wins and the rest are
+// discarded. That is the back-pressure policy — never block, never queue up
+// latency.
+class FrameSource {
+public:
+    size_t frameBytes = 0;
+    std::atomic<uint64_t> received{0}, discarded{0};
+    std::atomic<bool> connected{false}, stopped{false};
+
+    bool start(const std::string& path, size_t bytes) {
+        frameBytes = bytes;
+        for (auto& b : slot) b.assign(bytes, 0);
+        sock = socket(AF_UNIX, SOCK_STREAM, 0);
+        if (sock < 0) return false;
+        sockaddr_un addr{};
+        addr.sun_family = AF_UNIX;
+        strncpy(addr.sun_path, path.c_str(), sizeof(addr.sun_path) - 1);
+        // Lattice listens before spawning us, but tolerate a slow start.
+        for (int i = 0; i < 100; i++) {
+            if (connect(sock, (sockaddr*)&addr, sizeof(addr)) == 0) { connected = true; break; }
+            usleep(50 * 1000);
+        }
+        if (!connected) { close(sock); sock = -1; return false; }
+        worker = std::thread([this] { run(); });
+        return true;
+    }
+
+    // Copy the newest complete frame out. False if nothing has arrived yet.
+    bool latest(uint8_t* dst) {
+        int i = newest.load();
+        if (i < 0) return false;
+        std::lock_guard<std::mutex> g(mu[i]);
+        memcpy(dst, slot[i].data(), frameBytes);
+        consumed = true;
+        return true;
+    }
+
+    void stop() {
+        stopped = true;
+        if (sock >= 0) shutdown(sock, SHUT_RDWR);
+        if (worker.joinable()) worker.join();
+        if (sock >= 0) { close(sock); sock = -1; }
+    }
+
+private:
+    static const int kSlots = 3;
+    std::vector<uint8_t> slot[kSlots];
+    std::mutex mu[kSlots];
+    std::atomic<int> newest{-1};
+    std::atomic<bool> consumed{false};
+    std::thread worker;
+    int sock = -1;
+
+    void run() {
+        int w = 0;
+        while (!stopped) {
+            // Never write into the slot a reader may currently hold.
+            do { w = (w + 1) % kSlots; } while (w == newest.load());
+            std::unique_lock<std::mutex> g(mu[w]);
+            size_t got = 0;
+            while (got < frameBytes && !stopped) {
+                ssize_t n = recv(sock, slot[w].data() + got, frameBytes - got, 0);
+                if (n <= 0) { stopped = true; break; }
+                got += (size_t)n;
+            }
+            if (got < frameBytes) break;
+            g.unlock();
+            // A frame is only "discarded" if it was superseded before playback
+            // ever read it — i.e. the producer outran the raster.
+            if (newest.load() >= 0 && !consumed.exchange(false)) discarded++;
+            newest = w;
+            received++;
+        }
+        connected = false;
+    }
+};
+
+class StreamScheduler : public IDeckLinkVideoOutputCallback {
+public:
+    IDeckLinkOutput* out = NULL;
+    FrameSource* src = NULL;
+    Converter* conv = NULL;          // null when the card takes BGRA directly
+    std::vector<IDeckLinkMutableVideoFrame*> frames;
+    std::vector<uint8_t> staging;    // received BGRA, pre-conversion
+    int W = 0, H = 0;
+    BMDTimeValue frameDuration = 0;
+    BMDTimeScale timeScale = 0;
+    std::atomic<uint64_t> scheduled{0}, completed{0}, late{0}, dropped{0}, repeated{0};
+
+    HRESULT QueryInterface(REFIID, void**) override { return E_NOINTERFACE; }
+    ULONG AddRef() override { return ++ref; }
+    ULONG Release() override { return --ref; }
+    HRESULT ScheduledPlaybackHasStopped() override { return S_OK; }
+
+    HRESULT ScheduledFrameCompleted(IDeckLinkVideoFrame*, BMDOutputFrameCompletionResult r) override {
+        switch (r) {
+            case bmdOutputFrameCompleted:     completed++; break;
+            case bmdOutputFrameDisplayedLate: late++;      break;
+            case bmdOutputFrameDropped:       dropped++;   break;
+            default: break;
+        }
+        pushNext();
+        return S_OK;
+    }
+
+    void pushNext() {
+        uint64_t i = scheduled++;
+        IDeckLinkMutableVideoFrame* f = frames[i % frames.size()];
+        if (src->latest(staging.data())) {
+            uint8_t* dst = NULL;
+            f->GetBytes((void**)&dst);
+            if (conv) conv->convert(staging.data(), dst, W, H);
+            else      memcpy(dst, staging.data(), (size_t)W * H * 4);
+        } else {
+            repeated++;   // nothing new — hold the last frame rather than underrun
+        }
+        out->ScheduleVideoFrame(f, (BMDTimeValue)(i * frameDuration), frameDuration, timeScale);
+    }
+private:
+    std::atomic<ULONG> ref{1};
+};
+
+static int cmdStream(int index, const std::string& modeName, bool legalRange,
+                     bool forceYUV, bool force, const std::string& sockPath) {
+    auto devs = enumerate();
+    if (index < 0 || index >= (int)devs.size()) { fprintf(stderr, "device index out of range\n"); return 1; }
+    if (!force) probeInputSignals(devs, { index });
+    Dev& d = devs[index];
+    if (d.hasSignalIn) {
+        fprintf(stderr, "refusing: %s currently has an input signal locked.\n", d.uiName.c_str());
+        for (auto& x : devs) x.dl->Release();
+        return 3;
+    }
+
+    IDeckLinkOutput* out = NULL;
+    if (d.dl->QueryInterface(IID_IDeckLinkOutput, (void**)&out) != S_OK || !out) {
+        fprintf(stderr, "no output interface on %s\n", d.uiName.c_str()); return 1;
+    }
+    BMDDisplayMode mode = modeFromName(modeName);
+    BMDPixelFormat pf = bmdFormat8BitBGRA;
+    BMDDisplayModeSupport sup = bmdDisplayModeNotSupported;
+    if (forceYUV) pf = bmdFormat8BitYUV;
+    else {
+        out->DoesSupportVideoMode(mode, bmdFormat8BitBGRA, bmdVideoOutputFlagDefault, &sup, NULL);
+        if (sup == bmdDisplayModeNotSupported) pf = bmdFormat8BitYUV;
+    }
+    sup = bmdDisplayModeNotSupported;
+    out->DoesSupportVideoMode(mode, pf, bmdVideoOutputFlagDefault, &sup, NULL);
+    if (sup == bmdDisplayModeNotSupported) {
+        fprintf(stderr, "mode %s unsupported on %s\n", modeName.c_str(), d.uiName.c_str());
+        out->Release(); return 1;
+    }
+
+    int W = 0, H = 0; BMDTimeValue dur = 0; BMDTimeScale ts = 0;
+    IDeckLinkDisplayModeIterator* dmIt = NULL;
+    if (out->GetDisplayModeIterator(&dmIt) == S_OK) {
+        IDeckLinkDisplayMode* dm = NULL;
+        while (dmIt->Next(&dm) == S_OK) {
+            if (dm->GetDisplayMode() == mode) { W = (int)dm->GetWidth(); H = (int)dm->GetHeight(); dm->GetFrameRate(&dur, &ts); }
+            dm->Release();
+        }
+        dmIt->Release();
+    }
+    if (!W || !ts) { fprintf(stderr, "could not resolve mode geometry\n"); out->Release(); return 1; }
+
+    Converter conv;
+    const bool needConv = (pf == bmdFormat8BitYUV);
+    if (needConv && !conv.init(legalRange)) { fprintf(stderr, "vImage setup failed\n"); out->Release(); return 1; }
+
+    FrameSource src;
+    if (!src.start(sockPath, (size_t)W * H * 4)) {
+        fprintf(stderr, "could not connect to frame socket %s\n", sockPath.c_str());
+        out->Release(); return 1;
+    }
+
+    if (out->EnableVideoOutput(mode, bmdVideoOutputFlagDefault) != S_OK) {
+        fprintf(stderr, "EnableVideoOutput failed (device busy?)\n"); src.stop(); out->Release(); return 1;
+    }
+
+    StreamScheduler sched;
+    sched.out = out; sched.src = &src; sched.conv = needConv ? &conv : NULL;
+    sched.W = W; sched.H = H; sched.frameDuration = dur; sched.timeScale = ts;
+    sched.staging.assign((size_t)W * H * 4, 0);
+    out->SetScheduledFrameCompletionCallback(&sched);
+
+    const int kRing = 4;
+    for (int i = 0; i < kRing; i++) {
+        IDeckLinkMutableVideoFrame* f = NULL;
+        const int rowBytes = needConv ? W * 2 : W * 4;
+        if (out->CreateVideoFrame(W, H, rowBytes, pf, bmdFrameFlagDefault, &f) != S_OK) {
+            fprintf(stderr, "CreateVideoFrame failed\n"); src.stop(); out->Release(); return 1;
+        }
+        uint8_t* p = NULL; f->GetBytes((void**)&p);
+        memset(p, needConv ? 0x10 : 0x00, (size_t)rowBytes * H);   // start black, not garbage
+        sched.frames.push_back(f);
+    }
+
+    // Machine-readable so Lattice can surface health without scraping prose.
+    printf("{\"event\":\"ready\",\"device\":\"%s\",\"mode\":\"%s\",\"width\":%d,\"height\":%d,"
+           "\"fps\":%.3f,\"pixelFormat\":\"%s\",\"subsampled\":%s,\"range\":\"%s\"}\n",
+           d.uiName.c_str(), modeName.c_str(), W, H, (double)ts / (double)dur,
+           needConv ? "8BitYUV" : "8BitBGRA", needConv ? "true" : "false",
+           legalRange ? "legal" : "full");
+    fflush(stdout);
+
+    for (int i = 0; i < kRing; i++) sched.pushNext();
+    if (out->StartScheduledPlayback(0, ts, 1.0) != S_OK) {
+        fprintf(stderr, "StartScheduledPlayback failed\n"); src.stop(); out->Release(); return 1;
+    }
+
+    // Report health once a second until the socket closes (Lattice stopping the
+    // output, or Lattice dying — either way we exit rather than transmit stale
+    // frames forever).
+    uint64_t lastRecv = 0;
+    while (src.connected && !src.stopped) {
+        usleep(1000 * 1000);
+        uint64_t rx = src.received;
+        printf("{\"event\":\"stats\",\"rxFps\":%llu,\"received\":%llu,\"discarded\":%llu,"
+               "\"completed\":%llu,\"late\":%llu,\"dropped\":%llu,\"repeated\":%llu}\n",
+               (unsigned long long)(rx - lastRecv), (unsigned long long)rx,
+               (unsigned long long)src.discarded, (unsigned long long)sched.completed,
+               (unsigned long long)sched.late, (unsigned long long)sched.dropped,
+               (unsigned long long)sched.repeated);
+        fflush(stdout);
+        lastRecv = rx;
+    }
+
+    BMDTimeValue stopped = 0;
+    out->StopScheduledPlayback(0, &stopped, ts);
+    out->SetScheduledFrameCompletionCallback(NULL);
+    out->DisableVideoOutput();
+    src.stop();
+    for (auto* f : sched.frames) f->Release();
+    out->Release();
+    for (auto& x : devs) x.dl->Release();
+    return 0;
+}
 
 // --------------------------------------------------------------------- main
 
@@ -437,6 +700,22 @@ int main(int argc, char** argv) {
             else if (a == "--force")   force = true;
         }
         return cmdPlay(index, mode, pat, legal, secs, forceYUV, force);
+    }
+    if (cmd == "stream") {
+        int index = 0; std::string mode = "1080p59.94", sock;
+        bool legal = true, forceYUV = false, force = false;
+        for (int i = 2; i < argc; i++) {
+            std::string a = argv[i];
+            auto next = [&]() -> std::string { return (i + 1 < argc) ? argv[++i] : ""; };
+            if      (a == "--device") index = atoi(next().c_str());
+            else if (a == "--mode")   mode = next();
+            else if (a == "--socket") sock = next();
+            else if (a == "--range")  legal = (next() != "full");
+            else if (a == "--yuv")    forceYUV = true;
+            else if (a == "--force")  force = true;
+        }
+        if (sock.empty()) { fprintf(stderr, "stream requires --socket PATH\n"); return 1; }
+        return cmdStream(index, mode, legal, forceYUV, force, sock);
     }
     fprintf(stderr,
         "latticeout — DeckLink SDI output helper\n\n"

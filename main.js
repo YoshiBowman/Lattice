@@ -5,6 +5,14 @@ const fs = require('fs');
 const os = require('os');
 const { spawn, spawnSync, execFileSync } = require('child_process');
 const { autoUpdater } = require('electron-updater');
+// Loaded defensively: DeckLink support is optional and its absence — no helper,
+// no driver, no card — must never stop Lattice starting (§3 constraint 2).
+let decklink = null;
+try {
+  decklink = require('./decklink');
+} catch (err) {
+  console.log('[main] DeckLink support unavailable:', err.message);
+}
 
 const PRELOAD = path.join(__dirname, 'preload.js');
 
@@ -326,6 +334,49 @@ ipcMain.handle('get-config', () => config);
 ipcMain.handle('set-config', (e, cfg) => {
   config = cfg;
   broadcastToOutputs('config', config);
+  // A fault here must not break config delivery to the on-screen outputs —
+  // there is prior history of one failure inside push() freezing every output.
+  try {
+    if (decklink) decklink.broadcastConfig(config);
+  } catch (err) {
+    console.log('[main] DeckLink config broadcast failed:', err.message);
+  }
+});
+
+// ---------- DeckLink ----------
+
+ipcMain.handle('get-decklink', async () => {
+  if (!decklink) return { available: false, devices: [], modes: [] };
+  try {
+    const devices = await decklink.listDevices();
+    return {
+      available: decklink.available(),
+      devices,
+      modes: decklink.MODES,
+      active: decklink.activeIds(),
+    };
+  } catch (err) {
+    console.log('[main] DeckLink enumeration failed:', err.message);
+    return { available: false, devices: [], modes: [] };
+  }
+});
+
+function onDeckLinkStatus(id, status) {
+  notifyControl('decklink-status', Object.assign({ id }, status));
+  if (status.state === 'error') notifyControl('active-outputs-changed', null);
+}
+
+ipcMain.handle('start-decklink-output', (e, id, deviceIndex, mode, range) => {
+  if (!decklink) return { ok: false, error: 'DeckLink support is not available in this build.' };
+  try {
+    return decklink.startOutput(String(id), deviceIndex | 0, String(mode), String(range || 'legal'), onDeckLinkStatus);
+  } catch (err) {
+    return { ok: false, error: err.message };
+  }
+});
+
+ipcMain.handle('stop-decklink-output', (e, id) => {
+  try { if (decklink) decklink.stopOutput(String(id)); } catch (_) {}
 });
 
 ipcMain.handle('start-output', (e, displayId, virtualSpec) => {
@@ -418,6 +469,7 @@ ipcMain.handle('stop-output', (e, displayId) => {
 
 ipcMain.handle('stop-all', () => {
   for (const win of [...outputWins.values()]) if (!win.isDestroyed()) win.close();
+  try { if (decklink) decklink.stopAll(); } catch (_) {}
 });
 
 ipcMain.handle('identify', () => identifyAll());
@@ -430,6 +482,15 @@ ipcMain.handle('close-self', (e) => {
 });
 
 ipcMain.handle('my-output', (e) => {
+  // Offscreen DeckLink renderers are not in outputWins; they describe
+  // themselves as a display of the SDI raster size so output.js needs no
+  // special case.
+  if (decklink) {
+    try {
+      const dl = decklink.metaForWebContents(e.sender.id);
+      if (dl) return dl;
+    } catch (_) { /* fall through to the normal path */ }
+  }
   const meta = outputMeta.get(e.sender.id);
   if (!meta) return null;
   if (meta.virtual) {
@@ -459,5 +520,9 @@ app.whenReady().then(() => {
   });
   screen.on('display-metrics-changed', pushDisplays);
 });
+
+// Helpers are child processes holding a card open — leaving one running would
+// keep transmitting after Lattice is gone.
+app.on('before-quit', () => { try { if (decklink) decklink.stopAll(); } catch (_) {} });
 
 app.on('window-all-closed', () => app.quit());

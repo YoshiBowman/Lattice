@@ -644,6 +644,179 @@ function renderVirtuals() {
   });
 }
 
+// ---------- DeckLink SDI outputs ----------
+//
+// A DeckLink sub-device is just another output: same card, same controls
+// (label, wall, scale mode, Crop X/Y, Pos X/Y) via appendOutputControls. The
+// only extra controls are the ones that are genuinely specific to SDI — video
+// mode and colour range — because the raster is fixed by the standard rather
+// than by a monitor.
+
+let deckLinkInfo = { available: false, devices: [], modes: [] };
+let deckLinkActive = new Set();
+const deckLinkStatus = new Map();   // output id -> { state, error, stats }
+
+// A DeckLink output's config key is stable across restarts: it is tied to the
+// card's persistent ID, not to enumeration order.
+function dlOutputId(dev) { return 'dl:' + dev.persistentId; }
+
+function dlCfgFor(dev) {
+  const oc = outCfgFor(dlOutputId(dev));
+  if (!oc.dlMode) oc.dlMode = '1080p59.94';
+  if (!oc.dlRange) oc.dlRange = 'legal';
+  // SDI cannot rescale: 1:1 with Crop X/Y is the primary path for mapping a
+  // larger wall across several feeds (brief §5a decision 2).
+  if (!oc.dlInit) { oc.mode = '1to1'; oc.dlInit = true; }
+  return oc;
+}
+
+function renderDeckLink() {
+  const box = $('#decklinkList');
+  if (!box) return;
+  box.innerHTML = '';
+  if (!deckLinkInfo.available || !deckLinkInfo.devices.length) return; // absence is normal
+
+  for (const dev of deckLinkInfo.devices) {
+    const id = dlOutputId(dev);
+    const oc = dlCfgFor(dev);
+    const st = deckLinkStatus.get(id) || {};
+    const active = deckLinkActive.has(id);
+    const busy = !!dev.signalPresentOnInput;
+
+    const card = document.createElement('div');
+    card.className = 'display-card';
+
+    const num = document.createElement('div');
+    num.className = 'dnum';
+    num.textContent = 'SDI';
+
+    const info = document.createElement('div');
+    info.className = 'dinfo';
+    const name = document.createElement('div');
+    name.className = 'dname';
+    // Model + sub-device index, never the stored CardInfoLabel — one card's
+    // sub-devices are literally named "Input 1-4" (brief §5a decision 5).
+    name.dataset.fallback = dev.name;
+    name.textContent = oc.label || dev.name;
+    const res = document.createElement('div');
+    res.className = 'dres';
+    const m = deckLinkInfo.modes.find((x) => x.id === oc.dlMode) || deckLinkInfo.modes[0];
+    res.textContent = `${m.width} × ${m.height} px — SDI ${m.label}`;
+    info.append(name, res);
+
+    const head = document.createElement('div');
+    head.className = 'dhead';
+    head.append(num, info);
+
+    const badge = document.createElement('span');
+    if (busy && !active) { badge.className = 'badge'; badge.textContent = 'Receiving'; }
+    else if (st.state === 'error') { badge.className = 'badge'; badge.textContent = 'Error'; }
+    else { badge.className = active ? 'badge live' : 'badge virtual'; badge.textContent = active ? 'Live' : 'SDI'; }
+    head.appendChild(badge);
+
+    const btn = document.createElement('button');
+    btn.className = active ? 'btn danger' : 'btn primary';
+    btn.textContent = active ? 'Stop' : 'Start';
+    // Half-duplex: opening output on a receiving port flips it to transmit and
+    // kills whatever capture is running. Block it here as well as in the helper.
+    if (busy && !active) {
+      btn.disabled = true;
+      btn.title = 'This SDI port is currently receiving a signal. Starting an output would interrupt it.';
+    }
+    btn.addEventListener('click', () => {
+      if (active) window.ledwall.stopDeckLinkOutput(id);
+      else {
+        deckLinkStatus.delete(id);
+        window.ledwall.startDeckLinkOutput(id, dev.index, oc.dlMode, oc.dlRange).then((r) => {
+          if (r && r.ok === false) {
+            deckLinkStatus.set(id, { state: 'error', error: r.error });
+            renderDeckLink();
+          }
+        });
+      }
+    });
+    head.appendChild(btn);
+
+    const ctl = document.createElement('div');
+    ctl.className = 'dctl';
+
+    const modeSel = document.createElement('select');
+    for (const mm of deckLinkInfo.modes) {
+      const opt = document.createElement('option');
+      opt.value = mm.id;
+      opt.textContent = mm.label + (mm.subsampled ? ' (4:2:2)' : '');
+      modeSel.appendChild(opt);
+    }
+    modeSel.value = oc.dlMode;
+    modeSel.disabled = active;   // the raster is fixed once the card is running
+    modeSel.title = active ? 'Stop the output to change video mode' : 'SDI video mode';
+    modeSel.addEventListener('change', () => { oc.dlMode = modeSel.value; push(); renderDeckLink(); });
+    ctl.appendChild(field('Video mode', modeSel));
+
+    const rangeSel = document.createElement('select');
+    for (const [v, l] of [['legal', 'Legal (16–235)'], ['full', 'Full (0–255)']]) {
+      const opt = document.createElement('option');
+      opt.value = v; opt.textContent = l;
+      rangeSel.appendChild(opt);
+    }
+    rangeSel.value = oc.dlRange;
+    rangeSel.disabled = active;
+    rangeSel.title = 'SDI convention is legal range; many LED processors expect full range';
+    rangeSel.addEventListener('change', () => { oc.dlRange = rangeSel.value; push(); });
+    ctl.appendChild(field('Colour range', rangeSel));
+
+    appendOutputControls(ctl, id, oc, name);
+
+    card.append(head, ctl);
+
+    if (m.subsampled) {
+      const warn = document.createElement('div');
+      warn.className = 'hint';
+      warn.textContent = `${m.label} carries YUV 4:2:2 — the card refuses RGB at this rate. ` +
+        'Luma patterns (grid, Panel Map, Checkerboard, Gray Steps) are unaffected; ' +
+        'coloured single-pixel detail and Colour Bars are not pixel-exact. Use 1080p30 or 720p60 for those.';
+      card.appendChild(warn);
+    }
+    if (oc.mode !== '1to1') {
+      const warn = document.createElement('div');
+      warn.className = 'hint';
+      warn.textContent = `Scale mode "${oc.mode}" resamples the wall into the ${m.width}×${m.height} raster — ` +
+        'not pixel-exact. Use 1:1 with Crop X/Y to map a region of a larger wall.';
+      card.appendChild(warn);
+    }
+    if (busy && !active) {
+      const warn = document.createElement('div');
+      warn.className = 'hint';
+      warn.textContent = 'This port is receiving a signal. It is half-duplex, so starting an output here ' +
+        'would flip it to transmit and interrupt that capture.';
+      card.appendChild(warn);
+    }
+    if (st.state === 'error' && st.error) {
+      const err = document.createElement('div');
+      err.className = 'hint';
+      err.textContent = st.error + ' — press Start to try again.';
+      card.appendChild(err);
+    }
+
+    box.appendChild(card);
+  }
+}
+
+async function refreshDeckLink() {
+  try {
+    const info = await window.ledwall.getDeckLink();
+    if (info) {
+      deckLinkInfo = info;
+      if (Array.isArray(info.active)) deckLinkActive = new Set(info.active);
+    }
+  } catch (err) {
+    // Enumeration failing is not an error condition for the app — it just
+    // means no DeckLink outputs are on offer.
+    deckLinkInfo = { available: false, devices: [], modes: [] };
+  }
+  renderDeckLink();
+}
+
 function addVirtualOutput() {
   const width = Math.max(16, $('#vW').value | 0);
   const height = Math.max(16, $('#vH').value | 0);
@@ -1593,6 +1766,19 @@ async function init() {
       if (inp.dataset.poskey) inp.value = oc[inp.dataset.poskey];
     });
   });
+  // DeckLink enumeration runs after the UI is up so a slow or absent driver can
+  // never delay the control window appearing.
+  refreshDeckLink();
+  window.ledwall.onDeckLinkStatus((s) => {
+    if (!s || !s.id) return;
+    deckLinkStatus.set(s.id, s);
+    if (s.state === 'running') deckLinkActive.add(s.id);
+    else deckLinkActive.delete(s.id);
+    // Stats arrive every second; only re-render on a state change to avoid
+    // rebuilding the cards (and stealing focus) sixty times a minute.
+    if (!s.stats) renderDeckLink();
+  });
+
   window.LED_ON_IMAGE_READY(() => startPreview()); // re-render once the logo decodes
 
   window.addEventListener('resize', () => startPreview());
