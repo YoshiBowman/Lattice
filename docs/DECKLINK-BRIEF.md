@@ -365,6 +365,54 @@ simpler shared-memory ownership; a single helper has less process overhead and
 you have already proven two concurrent outputs work inside one process. Lean
 per-output for isolation unless measurement says otherwise.
 
+## 5f. Transport decision (Phase 3)
+
+Measured over a unix socket, offscreen → helper → card, 1080p59.94 BGRA:
+one output clean at 60 fps / 497 MB/s / 0 skipped; **two outputs degrade to 47
+unique fps** with ~285 skipped each. The design target is eight. So the socket
+does not scale, and §5e's shared-memory requirement is now evidence-based.
+
+**Do these in order, measuring after each — the later steps may prove
+unnecessary.**
+
+1. **Measure the STATIC case first.** The transport was characterised with
+   `motion`, an animated pattern, which is the worst case and not the common
+   one. Most test patterns — Grid, Panel Map, Checkerboard, Colour Bars, Gray
+   Steps, Solid — are static, and `renderer/output.js` already skips the rAF
+   loop entirely when `LED_FRAME_ANIMATED()` is false. Chromium OSR paints on
+   invalidation, so a static pattern should produce almost no paints, and the
+   helper already holds the last frame on starvation. **Eight static outputs may
+   already work over the plain socket at effectively zero sustained bandwidth.**
+   If so, the transport rebuild is only needed for multiple *animated* outputs,
+   which changes its priority considerably. Measure eight static outputs, and
+   eight with one animated, before building anything.
+
+2. **Convert to UYVY before the transport** for modes that require it
+   (1080p50/59.94/60). It halves the wire cost — 4.15 MB/frame instead of
+   8.29 — and the conversion is mandatory somewhere anyway. Keep it off the
+   main thread (worker + SharedArrayBuffer) and re-measure the two-output case;
+   it may clear on the socket alone.
+
+3. **Then, if still needed: file-backed mmap. Not a native addon.** Protecting
+   the release pipeline from native dependencies is why route (b) was chosen
+   and that still holds — a native addon reintroduces `electron-rebuild`, the
+   Blackmagic SDK as a build input on the release machine, and per-Electron
+   rebuilds.
+
+   The stated disk cost deserves measurement rather than acceptance. A small
+   ring (3 frames ≈ 25 MB) rewritten at 60 Hz dirties the *same* pages
+   repeatedly; the pager flushes current contents on its own schedule, so
+   actual writeback should be bounded by flush frequency × ring size, not by
+   write rate. That is a reasonable expectation, not a fact — **verify with
+   `fs_usage` / `iostat` before accepting it.** If writeback is genuinely heavy,
+   a RAM disk (`hdiutil attach -nomount ram://…`) removes the concern at the
+   cost of a mount to manage and clean up.
+
+Noted for later, not now: when several outputs show regions of the *same* wall
+(the eight-feeds case), the wall could be rendered once and each helper given
+its own crop, replacing N renderers with one. Worth it only if N-renderer CPU
+shows up as a problem.
+
 ## 5d. SDK headers and packaging — confirmed
 
 **Do not vendor Blackmagic's SDK headers into the repo.** They sit behind a
