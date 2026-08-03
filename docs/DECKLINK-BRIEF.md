@@ -243,12 +243,42 @@ first appears to be — see decision 2.
 
 ## 5b. Phase 1/2 outcome (measured on the hardware machine)
 
-**Cabling, established by content-correlated matrix scan of all 56 ordered port
-pairs, twice:** card #1's four BNCs are unconnected; card #2's four all receive
-external signal at 1080i59.94 (SDI 4 carrying live moving content). **Zero
-loopback pairs.** The Duo 2 has no internal loop-through, so no software setting
-creates a return path. Unblocking Phase 1 needs exactly one BNC cable, **card #1
-SDI 1 → card #1 SDI 2** — both ports free, nothing to unplug.
+**Cabling — CORRECTED 2026-08-03 by the operator. Read the correction before
+the measurement.**
+
+The matrix scan of all 56 ordered port pairs found: no incoming signal on any of
+card #1's ports, live external signal at 1080i59.94 on all four of card #2's
+(SDI 4 carrying moving content), and zero loopback pairs.
+
+That was over-interpreted as "card #1's BNCs are unconnected". **Both cards are
+in fact cabled.** Card #2 is the input card, fed by external sources. Card #1 is
+the **output card, and its four ports already run to downstream devices.**
+
+**The blind spot to remember: an SDI output port with a cable running downstream
+is indistinguishable from an empty port.** The card sees no incoming signal
+either way and cannot sense a passive load at the far end. "No signal received"
+means nothing is *feeding* the port — never that nothing is *attached* to it.
+The passive scan is therefore a detector for incoming feeds only, not for
+cables, and the "reliable cable detector" claim in the earlier session was
+wrong.
+
+Consequences, in order of importance:
+
+1. **Phase 1's gate may already be satisfiable with no new cable at all.** Card
+   #1's outputs are idle (radiating black, so nothing else is driving them) and
+   already connected to something. Transmitting a test pattern and having the
+   operator look at whatever those cables feed satisfies "a picture on the
+   downstream device" today.
+2. **If those cables reach an LED processor or wall, that is strictly more
+   valuable than the loopback**, because it answers the legal-vs-full range
+   question that §5a decision 1 says loopback can never settle.
+3. **Ask before transmitting.** Anything sent on card #1 now lands on real
+   downstream equipment. Establish what is on the far end first. (Note: the
+   topology scans already transmitted mid-grey on these ports.)
+4. The byte-exact loopback is still worth having for pixel-exactness, but it now
+   requires temporarily borrowing a port — either freeing one of card #1's
+   outputs to loop back into another, or freeing one of card #2's inputs to
+   receive from card #1 — rather than plugging in a spare cable.
 
 **Phase 2 helper (`latticeout`) is built and verified on hardware**: universal
 arm64+x86_64, links only CoreFoundation and Accelerate.
