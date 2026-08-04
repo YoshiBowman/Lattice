@@ -93,6 +93,36 @@ this machine.
 processor actually expects. That needs routing onward to a processor or
 reference monitor (§5a decision 1).
 
+## LED processor interop — measured against a known-good source
+
+The processors refused Lattice's output at 1080p59.94 but accepted it at
+1080p30 and below. A Hippotizer feeding two of the DeckLink inputs — a signal
+those same processors *do* accept — was captured with `tools/inspect.cpp` and
+compared.
+
+| | Hippotizer (accepted) | Lattice (refused) |
+|---|---|---|
+| Mode | 1080p59.94 progressive | 1080p59.94 progressive |
+| Raster | 1920×1080 | 1920×1080 |
+| Sampling | YCbCr 4:2:2 | YCbCr 4:2:2 |
+| Luma range | **Y min = 1** → full range | Y 16–235 → legal range |
+| 3G-SDI level | not exposed by the API | Level B (card default) |
+
+Two conclusions:
+
+1. **The processors' SDI inputs are 3G-capable at 59.94.** A working
+   1080p59.94 3G-SDI feed is sitting on them right now. So "the processor
+   cannot do 3G" is ruled out, and the ≤30 fps workaround is not a hardware
+   ceiling — 1.5G simply sidesteps whatever the 3G difference is. **3G-SDI
+   Level A is the remaining candidate**, and Hippotizer SDI outputs commonly
+   default to Level A.
+
+2. **The working show path is full range.** The Hippo's blacks sit at Y=1 with
+   44% of samples below legal black. This is real evidence for §5a decision 1,
+   which loopback could never settle: match the source the processors are
+   already fed. Note this shows what they *accept*, not necessarily what they
+   require.
+
 ## Transport scaling (§5f step 1)
 
 Measured end-to-end, offscreen → socket → card, 1080p59.94:
