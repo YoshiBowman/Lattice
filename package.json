@@ -1,7 +1,7 @@
 {
   "name": "lattice",
   "productName": "Lattice",
-  "version": "0.12.4",
+  "version": "0.13.0",
   "description": "Lattice — LED wall test pattern generator. Live multi-output test feeds for any show wall configuration.",
   "main": "main.js",
   "scripts": {
@@ -27,8 +27,19 @@
     "files": [
       "main.js",
       "preload.js",
+      "decklink.js",
       "renderer/**/*",
       "package.json"
+    ],
+    "extraResources": [
+      {
+        "//": "DeckLink helper, built separately on a machine with the Blackmagic SDK (see native/decklink-out/README.md). The filter matches nothing when it hasn't been built, which is a supported state — Lattice then offers no SDI outputs.",
+        "from": "native/decklink-out/",
+        "to": "decklink/",
+        "filter": [
+          "latticeout"
+        ]
+      }
     ],
     "mac": {
       "category": "public.app-category.utilities",
