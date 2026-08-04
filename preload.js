@@ -20,6 +20,12 @@ contextBridge.exposeInMainWorld('ledwall', {
   closeSelf: () => ipcRenderer.invoke('close-self'),
   getMyOutput: () => ipcRenderer.invoke('my-output'),
 
+  getDeckLink: () => ipcRenderer.invoke('get-decklink'),
+  startDeckLinkOutput: (id, deviceIndex, mode, range, level) =>
+    ipcRenderer.invoke('start-decklink-output', id, deviceIndex, mode, range, level),
+  stopDeckLinkOutput: (id) => ipcRenderer.invoke('stop-decklink-output', id),
+  onDeckLinkStatus: (cb) => ipcRenderer.on('decklink-status', (e, s) => cb(s)),
+
   installUpdate: () => ipcRenderer.invoke('install-update'),
   openReleases: () => ipcRenderer.invoke('open-releases'),
 
