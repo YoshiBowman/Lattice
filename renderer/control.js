@@ -282,17 +282,26 @@ function rebuildWallOutputSelect() {
   };
   add('', '— choose output —');
   displays.forEach((d) => add('d:' + d.id, `Display ${d.index}: ${d.label}`));
+  // SDI sits in the same list as everything else: sending a wall to a DeckLink
+  // port should be the same gesture as sending it to a display.
+  (deckLinkInfo.devices || []).forEach((dev) => {
+    const id = dlOutputId(dev);
+    const oc = cfg.outputs[id];
+    add('s:' + id, `SDI: ${(oc && oc.label) || dev.name}`);
+  });
   cfg.virtualOutputs.forEach((v, i) => {
     const oc = cfg.outputs[v.id];
     add('v:' + v.id, `V${i + 1}: ${(oc && oc.label) || `${v.width}×${v.height}`}`);
   });
   add('new', '+ New virtual window (wall size)');
   // show the output currently assigned to this wall (prefer a live one)
+  const isLive = (k) => activeSet.has(String(k)) || deckLinkActive.has(String(k));
   const assigned = Object.keys(cfg.outputs)
     .filter((k) => cfg.outputs[k].wallId === w.id)
-    .sort((a, b) => (activeSet.has(String(b)) ? 1 : 0) - (activeSet.has(String(a)) ? 1 : 0))[0];
+    .sort((a, b) => (isLive(b) ? 1 : 0) - (isLive(a) ? 1 : 0))[0];
   if (assigned !== undefined) {
-    const prefix = cfg.virtualOutputs.some((v) => String(v.id) === String(assigned)) ? 'v:' : 'd:';
+    const prefix = String(assigned).startsWith('dl:') ? 's:'
+      : cfg.virtualOutputs.some((v) => String(v.id) === String(assigned)) ? 'v:' : 'd:';
     sel.value = prefix + assigned;
     if (sel.selectedIndex === -1) sel.value = ''; // stale id (display unplugged)
   }
@@ -311,6 +320,19 @@ function wireWallOutputSelect() {
     const kind = val.slice(0, 1);
     const idRaw = val.slice(2);
     const id = kind === 'd' ? Number(idRaw) : idRaw;
+
+    if (kind === 's') {
+      const dev = (deckLinkInfo.devices || []).find((x) => dlOutputId(x) === id);
+      if (!dev) return;
+      const oc = dlCfgFor(dev);           // seeds dlMode/dlRange and 1:1 defaults
+      oc.wallId = w.id;
+      push();
+      renderDisplays();
+      renderDeckLink();
+      if (!deckLinkActive.has(id)) startDeckLinkOutputFor(dev, oc);
+      return;
+    }
+
     const oc = outCfgFor(id);
     oc.wallId = w.id;
     push();
@@ -480,8 +502,97 @@ function field(caption, el, title) {
   return lab;
 }
 
-// The labeled control row shared by physical and virtual output cards.
-function appendOutputControls(ctl, key, oc, nameEl) {
+// Fields that only make sense for one kind of output. Kept in the same
+// labelled-field flow as everything else rather than a separate panel.
+function appendTypeSpecificControls(ctl, oc, opts) {
+  if (opts.kind === 'sdi') {
+    // The raster and the conversion are fixed once the card is transmitting,
+    // so these lock while the output is live.
+    const live = !!opts.active;
+
+    const vmSel = document.createElement('select');
+    for (const mm of (opts.modes || [])) {
+      const o = document.createElement('option');
+      o.value = mm.id;
+      o.textContent = mm.label;
+      vmSel.appendChild(o);
+    }
+    vmSel.value = oc.dlMode;
+    vmSel.disabled = live;
+    vmSel.title = live ? 'Stop the output to change video mode' : 'SDI video mode';
+    vmSel.addEventListener('change', () => { oc.dlMode = vmSel.value; push(); renderDeckLink(); });
+    ctl.appendChild(field('Video mode', vmSel));
+
+    const rgSel = document.createElement('select');
+    for (const [v, l] of [['full', 'Full (0–255)'], ['legal', 'Legal (16–235)']]) {
+      const o = document.createElement('option');
+      o.value = v; o.textContent = l;
+      rgSel.appendChild(o);
+    }
+    rgSel.value = oc.dlRange;
+    rgSel.disabled = live;
+    rgSel.title = 'SDI convention is legal range; LED processors commonly expect full. ' +
+      'Full forces Lattice\'s own conversion — the card\'s built-in RGB conversion only ever ' +
+      'produces legal range.';
+    rgSel.addEventListener('change', () => { oc.dlRange = rgSel.value; push(); });
+    ctl.appendChild(field('Colour range', rgSel));
+
+    // Only meaningful on 3G modes, and hidden at the 1080p30 default so it does
+    // not clutter the common case. Kept because it is hardware-verified and may
+    // matter on other rigs, even though it did not resolve the HVT11.
+    const sel = (opts.modes || []).find((x) => x.id === oc.dlMode);
+    if (sel && sel.threeG) {
+      const lvSel = document.createElement('select');
+      for (const [v, l] of [['b', 'Level B (default)'], ['a', 'Level A']]) {
+        const o = document.createElement('option');
+        o.value = v; o.textContent = l;
+        lvSel.appendChild(o);
+      }
+      lvSel.value = oc.dlLevel;
+      lvSel.disabled = live;
+      lvSel.title = 'How this rate is mapped onto 3G-SDI. Some devices accept only one mapping.';
+      lvSel.addEventListener('change', () => { oc.dlLevel = lvSel.value; push(); });
+      ctl.appendChild(field('3G-SDI level', lvSel));
+    }
+    return;
+  }
+
+  if (opts.kind === 'virtual' && opts.spec) {
+    const res = document.createElement('input');
+    res.type = 'text';
+    res.className = 'olabel';
+    res.value = `${opts.spec.width}×${opts.spec.height}`;
+    res.title = 'Resolution of this virtual output, e.g. 1920×1080';
+    const applyRes = () => {
+      const m = res.value.match(/(\d+)\s*[x×*,\s]\s*(\d+)/);
+      if (!m) { res.value = `${opts.spec.width}×${opts.spec.height}`; return; }
+      const w = Math.max(16, Math.min(16384, parseInt(m[1], 10)));
+      const h = Math.max(16, Math.min(16384, parseInt(m[2], 10)));
+      if (w === opts.spec.width && h === opts.spec.height) { res.value = `${w}×${h}`; return; }
+      opts.spec.width = w; opts.spec.height = h;
+      push();
+      // A live virtual output is a window sized to the old resolution; restart
+      // it so the change actually takes effect.
+      if (opts.active) {
+        window.ledwall.stopOutput(opts.spec.id);
+        window.ledwall.startOutput(opts.spec.id, { width: w, height: h, label: oc.label });
+      }
+      renderDisplays();
+    };
+    res.addEventListener('change', applyRes);
+    ctl.appendChild(field('Resolution', res));
+  }
+}
+
+// The labeled control row shared by every output card, whatever its kind.
+//
+// `opts.kind` selects the type-specific fields that sit inline between Wall and
+// Scale — video mode and colour range for SDI, resolution for virtual, nothing
+// for a physical display. Everything else is identical across kinds on purpose:
+// an SDI output is a display card with two extra fields, not a different sort
+// of object.
+function appendOutputControls(ctl, key, oc, nameEl, opts) {
+  opts = opts || {};
   const labelInput = document.createElement('input');
   labelInput.type = 'text';
   labelInput.className = 'olabel';
@@ -496,6 +607,8 @@ function appendOutputControls(ctl, key, oc, nameEl) {
   ctl.appendChild(field('Label', labelInput));
 
   ctl.appendChild(field('Wall', wallSelectFor(oc), 'Which wall this output displays'));
+
+  appendTypeSpecificControls(ctl, oc, opts);
 
   const modeSel = document.createElement('select');
   for (const [val, label] of [['fit', 'Fit'], ['fill', 'Fill'], ['stretch', 'Stretch'], ['1to1', '1:1 pixel']]) {
@@ -579,7 +692,7 @@ function renderDisplays() {
 
     const ctl = document.createElement('div');
     ctl.className = 'dctl';
-    appendOutputControls(ctl, d.id, oc, null);
+    appendOutputControls(ctl, d.id, oc, null, { kind: 'display' });
 
     card.append(head, ctl);
     box.appendChild(card);
@@ -637,7 +750,7 @@ function renderVirtuals() {
 
     const ctl = document.createElement('div');
     ctl.className = 'dctl';
-    appendOutputControls(ctl, v.id, oc, name);
+    appendOutputControls(ctl, v.id, oc, name, { kind: 'virtual', spec: v, active });
 
     card.append(head, ctl);
     box.appendChild(card);
@@ -676,11 +789,36 @@ function dlCfgFor(dev) {
   return oc;
 }
 
+// Shared by the card's Start button and the wall's "Send to output" dropdown so
+// both routes behave identically — including the half-duplex guard, which must
+// hold however the output was started.
+function startDeckLinkOutputFor(dev, oc) {
+  const id = dlOutputId(dev);
+  if (dev.signalPresentOnInput) {
+    deckLinkStatus.set(id, {
+      state: 'error',
+      error: 'This SDI port is currently receiving a signal. Starting an output here would ' +
+             'flip the port to transmit and interrupt that capture.',
+    });
+    renderDeckLink();
+    return;
+  }
+  deckLinkStatus.delete(id);
+  window.ledwall.startDeckLinkOutput(id, dev.index, oc.dlMode, oc.dlRange, oc.dlLevel).then((r) => {
+    if (r && r.ok === false) {
+      deckLinkStatus.set(id, { state: 'error', error: r.error });
+      renderDeckLink();
+    }
+  });
+}
+
 function renderDeckLink() {
   const box = $('#decklinkList');
   if (!box) return;
   box.innerHTML = '';
-  if (!deckLinkInfo.available || !deckLinkInfo.devices.length) return; // absence is normal
+  // Absence is normal: no helper, driver or card simply means no SDI cards and
+  // no SDI entries in the wall dropdown.
+  if (!deckLinkInfo.available || !deckLinkInfo.devices.length) { rebuildWallOutputSelect(); return; }
 
   for (const dev of deckLinkInfo.devices) {
     const id = dlOutputId(dev);
@@ -731,65 +869,15 @@ function renderDeckLink() {
     }
     btn.addEventListener('click', () => {
       if (active) window.ledwall.stopDeckLinkOutput(id);
-      else {
-        deckLinkStatus.delete(id);
-        window.ledwall.startDeckLinkOutput(id, dev.index, oc.dlMode, oc.dlRange, oc.dlLevel).then((r) => {
-          if (r && r.ok === false) {
-            deckLinkStatus.set(id, { state: 'error', error: r.error });
-            renderDeckLink();
-          }
-        });
-      }
+      else startDeckLinkOutputFor(dev, oc);
     });
     head.appendChild(btn);
 
     const ctl = document.createElement('div');
     ctl.className = 'dctl';
 
-    const modeSel = document.createElement('select');
-    for (const mm of deckLinkInfo.modes) {
-      const opt = document.createElement('option');
-      opt.value = mm.id;
-      opt.textContent = mm.label;
-      modeSel.appendChild(opt);
-    }
-    modeSel.value = oc.dlMode;
-    modeSel.disabled = active;   // the raster is fixed once the card is running
-    modeSel.title = active ? 'Stop the output to change video mode' : 'SDI video mode';
-    modeSel.addEventListener('change', () => { oc.dlMode = modeSel.value; push(); renderDeckLink(); });
-    ctl.appendChild(field('Video mode', modeSel));
-
-    const rangeSel = document.createElement('select');
-    for (const [v, l] of [['legal', 'Legal (16–235)'], ['full', 'Full (0–255)']]) {
-      const opt = document.createElement('option');
-      opt.value = v; opt.textContent = l;
-      rangeSel.appendChild(opt);
-    }
-    rangeSel.value = oc.dlRange;
-    rangeSel.disabled = active;
-    rangeSel.title = 'SDI convention is legal range (16–235); many LED processors expect full (0–255). ' +
-      'Full range forces Lattice\'s own colour conversion, because the card\'s built-in ' +
-      'RGB conversion only ever produces legal range.';
-    rangeSel.addEventListener('change', () => { oc.dlRange = rangeSel.value; push(); });
-    ctl.appendChild(field('Colour range', rangeSel));
-
-    // 3G-SDI only (1080p50/59.94/60). Below that it is 1.5G HD-SDI and the
-    // mapping question does not arise, so the control is shown but inert.
-    const levelSel = document.createElement('select');
-    for (const [v, l] of [['b', 'Level B (default)'], ['a', 'Level A']]) {
-      const opt = document.createElement('option');
-      opt.value = v; opt.textContent = l;
-      levelSel.appendChild(opt);
-    }
-    levelSel.value = oc.dlLevel;
-    levelSel.disabled = active;
-    levelSel.title = 'How 1080p50/59.94/60 is mapped onto 3G-SDI. The card defaults to ' +
-      'Level B; many LED processors only accept Level A and will report "no signal" otherwise. ' +
-      'No effect below 1080p50.';
-    levelSel.addEventListener('change', () => { oc.dlLevel = levelSel.value; push(); });
-    ctl.appendChild(field('3G-SDI level', levelSel));
-
-    appendOutputControls(ctl, id, oc, name);
+    appendOutputControls(ctl, id, oc, name,
+      { kind: 'sdi', active, modes: deckLinkInfo.modes });
 
     card.append(head, ctl);
 
@@ -843,6 +931,9 @@ function renderDeckLink() {
 
     box.appendChild(card);
   }
+  // SDI outputs are offered in the wall's "Send to output" list, so that list
+  // has to be rebuilt whenever the device set or their labels change.
+  rebuildWallOutputSelect();
 }
 
 async function refreshDeckLink() {
