@@ -418,6 +418,80 @@ simpler shared-memory ownership; a single helper has less process overhead and
 you have already proven two concurrent outputs work inside one process. Lean
 per-output for isolation unless measurement says otherwise.
 
+## 5g. Gate passed; 3G refused by the rig (site-specific, unresolved)
+
+**The byte-exact gate is closed.** Run through the Videohub loopback, it passes
+identically at 1080p30 and 1080p59.94 — pixel-exactness and Gray Steps
+crush/clip both verified against real transmitted-then-captured pixels. §5a
+decision 1's open item is answered: **full range** is correct for this rig,
+established empirically (the Hippotizer feed the processors already accept
+measures full range on the wire, Y 1–254).
+
+**Default changed to 1080p30, full range — approved.** This overrides §5a
+decision 3's "default to 1080p59.94/60", which was written before any processor
+had been tested. A default that does not lock on real hardware is worse than one
+that does, and the cost is confined to Motion Test: every other pattern is
+static, so 30 fps is indistinguishable, and the gate passed identically at both
+rates. 3G modes stay selectable with an on-card warning describing the symptom.
+
+**Unresolved, and recorded as such:** a DBSTAR HVT11 on this rig accepts
+1080p30 (1.5G) and refuses 1080p59.94 (3G). Everything measurable was matched to
+a Hippotizer feed the same processor does accept — same mode, raster, 4:2:2,
+progressive, full range — and Level A was confirmed genuinely on the wire
+(`BMDDeckLinkSupportsSMPTELevelAOutput` = yes on every sub-device). The hub
+demonstrably passes 3G, since our own 3G returns through it. The two signals are
+indistinguishable in every property the card can measure.
+
+The only remaining difference is **VPID (SMPTE 352M payload ID)**, which lives
+in horizontal blanking; the DeckLink ancillary API exposes vertical only, so it
+cannot be read or verified from software. Settling that definitively needs an
+SDI analyser, not more code.
+
+**Two cheap tests that would isolate it, neither yet run — do these before
+spending more time:**
+
+1. **Reciprocal routing test.** Route our card #1 output to the *exact* hub
+   output, cable and processor input the Hippo currently uses. Then route the
+   Hippo to the hub output we have been using. If ours locks on the Hippo's path
+   and the Hippo fails on ours, the fault is the **path** — most likely cable or
+   interconnect bandwidth, which passes 1.5G and fails 3G routinely and would
+   explain every observation. If ours still fails on the Hippo's exact path,
+   the difference really is in metadata we cannot see.
+2. **Does 1080p50 fail?** Also 3G. Failing puts the boundary exactly at
+   1.5G/3G; working makes it specific to 59.94 and points somewhere else
+   entirely. This was asked and never answered.
+
+**Also worth resolving: what is actually receiving the SDI?** The HVT11 is a
+*sending card* whose native formats are 2048×640, 1280×1024 and 1024×1200 —
+1920×1080 is not among them, and a 1080p frame (2.07 M px) exceeds the card's
+entire 1.31 M px capacity. If SDI is arriving at a converter or input board in
+front of it, that device's rating is what matters, and a 1.5G-only converter
+would explain the whole symptom.
+
+**CLOSED 2026-08-04 by the operator** as something in the signal chain rather
+than a Lattice defect. 1080p30 full range is the accepted configuration. Do not
+spend further software time on 3G; the two isolating tests above remain written
+down only in case someone with an analyser wants them later.
+
+## 5h. UI: SDI outputs belong in the wall-first flow
+
+Requested after seeing the first integration. DeckLink settings currently read
+as a side attachment; they should sit in the same flow as every other output.
+
+1. **SDI outputs appear in the wall's "Send to output" dropdown**
+   (`rebuildWallOutputSelect`) alongside physical displays, virtual outputs and
+   "+ New virtual window". Selecting one assigns the wall to that output and
+   starts it, exactly as the existing entries do.
+2. **SDI-specific settings — video mode and colour range — live in that
+   output's card in the Outputs panel under the preview**, inline with Label /
+   Wall / Scale / Pos X/Y, not in a separate area. Selecting an SDI output for a
+   wall therefore surfaces its settings in the same place every other output's
+   settings appear.
+3. **Type-specific controls appear only for the relevant type**: mode and range
+   for SDI, resolution for virtual, neither for physical displays.
+4. Reuse `appendOutputControls()` and the `field()` helper. Do not build a
+   parallel control surface — that was §5e constraint 3 and it still holds.
+
 ## 5f. Transport decision (Phase 3)
 
 Measured over a unix socket, offscreen → helper → card, 1080p59.94 BGRA:
