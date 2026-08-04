@@ -108,7 +108,38 @@ compared.
 | Luma range | **Y min = 1** → full range | Y 16–235 → legal range |
 | 3G-SDI level | not exposed by the API | Level B (card default) |
 
-Two conclusions:
+### Outcome: 3G-SDI is refused by the HVT11 and we could not make it work
+
+Everything below was tried at 1080p59.94 and the processor still showed no
+signal. It locks at 1080p30 and below.
+
+- **3G-SDI Level A.** The card reports `SupportsSMPTELevelAOutput: yes` and the
+  config reads back applied, so this is genuinely on the wire — not a no-op.
+- **Full range**, matching the Hippotizer exactly (our output moved from
+  Y 16–235 to Y 1–254).
+- Every other measurable property already matched: 1080p59.94 progressive,
+  1920×1080, YCbCr 4:2:2.
+
+Captured side by side, our signal and the working Hippotizer signal are
+**indistinguishable in every property this card can measure**. The one remaining
+difference is **VPID** (SMPTE 352M payload ID), which declares format and 3G
+level — and it cannot be read here, because VPID lives in *horizontal* blanking
+while the DeckLink ancillary API only exposes *vertical* blanking. That is a
+hard limit of this SDK, not something to work around.
+
+Context from Lattice's own processor table: the `DBS-HVT11` is a **sending
+card** (2 × 1G Ethernet, 1,310,720 px total) whose listed native formats are
+2048×640, 1280×1024 and 1024×1200 — **1920×1080 is not among them**. Its SDI
+input is plausibly a bolt-on rather than a native 3G receiver, and bolt-on SDI
+on sending cards of this generation is commonly 1.5G only.
+
+**Consequence for defaults:** DeckLink outputs now default to **1080p30, full
+range**, which is what demonstrably works here. This deliberately overrides §5a
+decision 3's "default to 1080p59.94/60", which was written before any processor
+had been tested. Only Motion Test is affected by the lower rate; every other
+pattern is static. The 3G modes remain selectable with a UI warning.
+
+Two further conclusions:
 
 1. **The processors' SDI inputs are 3G-capable at 59.94.** A working
    1080p59.94 3G-SDI feed is sitting on them right now. So "the processor

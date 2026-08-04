@@ -67,9 +67,9 @@ function listDevices() {
 // card BGRA just moves the RGB->YUV conversion into the card. True 4:4:4 needs
 // 444 output enabled on both ends and is not offered here.
 const MODES = [
-  { id: '1080p59.94', label: '1080p59.94', width: 1920, height: 1080, fps: 59.94, nativeBGRA: false },
-  { id: '1080p60',    label: '1080p60',    width: 1920, height: 1080, fps: 60,    nativeBGRA: false },
-  { id: '1080p50',    label: '1080p50',    width: 1920, height: 1080, fps: 50,    nativeBGRA: false },
+  { threeG: true, id: '1080p59.94', label: '1080p59.94', width: 1920, height: 1080, fps: 59.94, nativeBGRA: false },
+  { threeG: true, id: '1080p60',    label: '1080p60',    width: 1920, height: 1080, fps: 60,    nativeBGRA: false },
+  { threeG: true, id: '1080p50',    label: '1080p50',    width: 1920, height: 1080, fps: 50,    nativeBGRA: false },
   { id: '1080p30',    label: '1080p30',    width: 1920, height: 1080, fps: 30,    nativeBGRA: true },
   { id: '1080p29.97', label: '1080p29.97', width: 1920, height: 1080, fps: 29.97, nativeBGRA: true },
   { id: '1080p25',    label: '1080p25',    width: 1920, height: 1080, fps: 25,    nativeBGRA: true },

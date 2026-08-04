@@ -663,8 +663,12 @@ function dlOutputId(dev) { return 'dl:' + dev.persistentId; }
 
 function dlCfgFor(dev) {
   const oc = outCfgFor(dlOutputId(dev));
-  if (!oc.dlMode) oc.dlMode = '1080p59.94';
-  if (!oc.dlRange) oc.dlRange = 'legal';
+  // Defaults chosen from measurement on real hardware, not convention:
+  // 1080p30 because a DBSTAR HVT11 refuses 3G-SDI (1080p50 and above) while
+  // accepting 1.5G, and full range because the signal those processors are
+  // already fed -- a Hippotizer -- measures full range on the wire.
+  if (!oc.dlMode) oc.dlMode = '1080p30';
+  if (!oc.dlRange) oc.dlRange = 'full';
   if (!oc.dlLevel) oc.dlLevel = 'b';
   // SDI cannot rescale: 1:1 with Crop X/Y is the primary path for mapping a
   // larger wall across several feeds (brief §5a decision 2).
@@ -800,6 +804,22 @@ function renderDeckLink() {
       'horizontal colour detail is halved, so coloured single-pixel features and Colour Bars ' +
       'edges are not. No available mode avoids this.';
     card.appendChild(chroma);
+
+    // Hard-won on a DBSTAR HVT11: it locks 1080p30 and below but refuses
+    // 1080p50/59.94/60, while accepting a 1080p59.94 feed from another source
+    // through the same router. Level A, full range and matching every
+    // measurable property of that working signal made no difference. Put the
+    // knowledge in front of the operator at the moment it matters rather than
+    // leaving them to rediscover it.
+    if (m.threeG) {
+      const tg = document.createElement('div');
+      tg.className = 'hint';
+      tg.textContent = `${m.label} is 3G-SDI. Some LED processors and sending cards accept only ` +
+        '1.5G HD-SDI and will show no signal at this rate even though the card is transmitting ' +
+        'correctly. If the device does not lock, try 1080p30 — everything except Motion Test ' +
+        'is unaffected by the lower rate.';
+      card.appendChild(tg);
+    }
     if (oc.mode !== '1to1') {
       const warn = document.createElement('div');
       warn.className = 'hint';

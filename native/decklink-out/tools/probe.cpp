@@ -75,6 +75,7 @@ int main() {
             attrInt(attr, BMDDeckLinkNumberOfSubDevices,  "NumberOfSubDevices");
             attrFlag(attr, BMDDeckLinkSupportsDuplexModeConfiguration, "DuplexConfigurable");
             attrFlag(attr, BMDDeckLinkSupportsFullDuplex, "SupportsFullDuplex");
+            attrFlag(attr, BMDDeckLinkSupportsSMPTELevelAOutput, "SupportsSMPTELevelAOutput");
             attrInt(attr, BMDDeckLinkVideoOutputConnections, "VideoOutputConnections", true);
             attrInt(attr, BMDDeckLinkVideoInputConnections,  "VideoInputConnections", true);
             attrFlag(attr, BMDDeckLinkSupportsInternalKeying, "SupportsInternalKeying");
