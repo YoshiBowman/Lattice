@@ -33,7 +33,6 @@
     ],
     "extraResources": [
       {
-        "//": "DeckLink helper, built separately on a machine with the Blackmagic SDK (see native/decklink-out/README.md). The filter matches nothing when it hasn't been built, which is a supported state — Lattice then offers no SDI outputs.",
         "from": "native/decklink-out/",
         "to": "decklink/",
         "filter": [
