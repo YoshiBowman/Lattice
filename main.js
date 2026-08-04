@@ -218,6 +218,21 @@ function findDownloadedZip() {
   }
 }
 
+// Removing an app bundle must NOT go through Node's fs. Electron patches fs so
+// that .asar archives look like directories, so a recursive rmSync walks into
+// Contents/Resources/app.asar and then fails with ENOTDIR trying to rmdir a
+// file. /bin/rm has no such notion. This bit every update after the first,
+// because the first one leaves a Lattice.app.old behind for the next to clear.
+function removeBundle(target) {
+  try {
+    if (fs.existsSync(target)) execFileSync('/bin/rm', ['-rf', target]);
+    return true;
+  } catch (err) {
+    console.error('[updater] could not remove', target, err.message);
+    return false;
+  }
+}
+
 // Fallback installer for unsigned macOS builds: unpack the downloaded zip and
 // swap the bundle in place. Transactional — the running app is only moved
 // aside once the replacement is staged on the SAME volume, and it is restored
@@ -255,7 +270,7 @@ function installUnsignedMacUpdate() {
     if (!newApp) throw new Error('the downloaded archive did not contain an app bundle');
 
     const backup = bundle + '.old';
-    fs.rmSync(backup, { recursive: true, force: true });
+    if (!removeBundle(backup)) throw new Error(`could not clear the previous backup at ${backup}`);
     execFileSync('/bin/mv', [bundle, backup]); // running app keeps working from the renamed bundle
     try {
       execFileSync('/bin/mv', [newApp, bundle]);
@@ -267,12 +282,14 @@ function installUnsignedMacUpdate() {
     // swapped copy opens without a Gatekeeper prompt
     try { execFileSync('xattr', ['-dr', 'com.apple.quarantine', bundle]); } catch (_) { /* best effort */ }
 
-    fs.rmSync(staging, { recursive: true, force: true });
+    removeBundle(staging);
     spawn('open', ['-n', bundle], { detached: true, stdio: 'ignore' }).unref();
     setTimeout(() => app.quit(), 400);
     return { ok: true };
   } catch (err) {
-    if (staging) fs.rmSync(staging, { recursive: true, force: true, maxRetries: 2 });
+    // Cleanup must never throw over the top of the real failure — that is how
+    // the underlying cause got replaced by an ENOTDIR about app.asar.
+    if (staging) removeBundle(staging);
     return { ok: false, error: `Update failed: ${err.message}` };
   }
 }
@@ -282,7 +299,9 @@ function setupAutoUpdater() {
   if (process.platform === 'darwin') {
     macNeedsManualSwap = !macProperlySigned();
     // clean up the previous bundle left behind by a manual swap
-    fs.rm(appBundlePath() + '.old', { recursive: true, force: true }, () => {});
+    // clean up the previous bundle left behind by a manual swap (same asar
+    // hazard — this had been failing silently, so .old dirs accumulated)
+    setTimeout(() => removeBundle(appBundlePath() + '.old'), 3000);
   }
   autoUpdater.autoDownload = true;
   autoUpdater.autoInstallOnAppQuit = !macNeedsManualSwap; // Squirrel would fail silently
