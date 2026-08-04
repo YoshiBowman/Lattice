@@ -8,7 +8,12 @@ dist/
 # Until then, release with: GH_TOKEN=<token> npm run release
 .github/workflows/
 
-# DeckLink helper build artifacts
-native/decklink-out/latticeout
+# DeckLink diagnostic tool binaries. The helper itself (latticeout) is
+# deliberately NOT ignored: it is tracked so releases can bundle it, and so a
+# rebuild shows up in `git status` rather than a stale binary sitting silently
+# in the repo while the source moves underneath it.
 native/decklink-out/loopscan
 native/decklink-out/probe
+native/decklink-out/pairtest
+native/decklink-out/gate
+native/decklink-out/inspect
