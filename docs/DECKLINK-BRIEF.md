@@ -468,8 +468,29 @@ entire 1.31 M px capacity. If SDI is arriving at a converter or input board in
 front of it, that device's rating is what matters, and a 1.5G-only converter
 would explain the whole symptom.
 
-**Timebox this.** It is a site-specific interconnect question, not a Lattice
-defect, and the cost of settling at 1080p30 is one pattern.
+**CLOSED 2026-08-04 by the operator** as something in the signal chain rather
+than a Lattice defect. 1080p30 full range is the accepted configuration. Do not
+spend further software time on 3G; the two isolating tests above remain written
+down only in case someone with an analyser wants them later.
+
+## 5h. UI: SDI outputs belong in the wall-first flow
+
+Requested after seeing the first integration. DeckLink settings currently read
+as a side attachment; they should sit in the same flow as every other output.
+
+1. **SDI outputs appear in the wall's "Send to output" dropdown**
+   (`rebuildWallOutputSelect`) alongside physical displays, virtual outputs and
+   "+ New virtual window". Selecting one assigns the wall to that output and
+   starts it, exactly as the existing entries do.
+2. **SDI-specific settings — video mode and colour range — live in that
+   output's card in the Outputs panel under the preview**, inline with Label /
+   Wall / Scale / Pos X/Y, not in a separate area. Selecting an SDI output for a
+   wall therefore surfaces its settings in the same place every other output's
+   settings appear.
+3. **Type-specific controls appear only for the relevant type**: mode and range
+   for SDI, resolution for virtual, neither for physical displays.
+4. Reuse `appendOutputControls()` and the `field()` helper. Do not build a
+   parallel control surface — that was §5e constraint 3 and it still holds.
 
 ## 5f. Transport decision (Phase 3)
 
