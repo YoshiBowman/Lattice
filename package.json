@@ -1,7 +1,7 @@
 {
   "name": "lattice",
   "productName": "Lattice",
-  "version": "0.13.0",
+  "version": "0.13.1",
   "description": "Lattice — LED wall test pattern generator. Live multi-output test feeds for any show wall configuration.",
   "main": "main.js",
   "scripts": {
@@ -31,15 +31,6 @@
       "renderer/**/*",
       "package.json"
     ],
-    "extraResources": [
-      {
-        "from": "native/decklink-out/",
-        "to": "decklink/",
-        "filter": [
-          "latticeout"
-        ]
-      }
-    ],
     "mac": {
       "category": "public.app-category.utilities",
       "target": [
@@ -50,7 +41,16 @@
       "gatekeeperAssess": false,
       "entitlements": "build/entitlements.mac.plist",
       "entitlementsInherit": "build/entitlements.mac.plist",
-      "icon": "build/icon.icns"
+      "icon": "build/icon.icns",
+      "extraResources": [
+        {
+          "from": "native/decklink-out/",
+          "to": "decklink/",
+          "filter": [
+            "latticeout"
+          ]
+        }
+      ]
     },
     "win": {
       "target": [
