@@ -300,11 +300,94 @@ function syncSplitUI() {
   $('#splitColPanelsRow').style.display = s.cols > 1 ? '' : 'none';
   $('#splitRowPanelsRow').style.display = s.rows > 1 ? '' : 'none';
   $('#splitOverlapRow').style.display = split ? '' : 'none';
-  $('#splitColPanels').value = window.LED_SPLIT_SPANS(s.colPanels, s.cols, g.cols).join(', ');
-  $('#splitRowPanels').value = window.LED_SPLIT_SPANS(s.rowPanels, s.rows, g.rows).join(', ');
+  renderSpanBoxes('col', s.cols, g.cols);
+  renderSpanBoxes('row', s.rows, g.rows);
 
   updateSplitSummary();
   renderSegmentOutputs();
+}
+
+// One numeric box per segment rather than a comma-separated list. Boxes are
+// only rebuilt when the segment count changes — rebuilding on every keystroke
+// would steal focus mid-edit.
+function renderSpanBoxes(axis, count, total) {
+  const key = axis === 'col' ? 'colPanels' : 'rowPanels';
+  const box = $(`#split${axis === 'col' ? 'Col' : 'Row'}PanelsBoxes`);
+  if (!box) return;
+  const w = curWall();
+  // a split may arrive without span arrays at all — from a show saved before
+  // panel-sized segments existed, or set directly — so never assume them
+  const current = Array.isArray(w.split[key]) ? w.split[key] : [];
+  const values = window.LED_SPLIT_SPANS(current, count, total);
+  // commit the seeded split so what the boxes show is what the wall holds —
+  // otherwise state and UI disagree until the first manual edit
+  if (current.join(',') !== values.join(',')) w.split[key] = values.slice();
+
+  if (box.children.length !== count) {
+    box.innerHTML = '';
+    for (let i = 0; i < count; i++) {
+      const lab = document.createElement('label');
+      lab.className = 'span-box';
+      const cap = document.createElement('span');
+      cap.textContent = `Seg ${i + 1}`;
+      const inp = document.createElement('input');
+      inp.type = 'number';
+      inp.min = '1';
+      inp.max = String(total);
+      inp.dataset.idx = String(i);
+      inp.addEventListener('input', () => applySpanBoxes(axis, count, total));
+      lab.append(cap, inp);
+      box.appendChild(lab);
+    }
+  }
+  // refresh values without disturbing whichever box is being typed in
+  [...box.querySelectorAll('input')].forEach((inp, i) => {
+    if (document.activeElement !== inp) inp.value = values[i];
+  });
+  validateSpanBoxes(axis, total);
+}
+
+function spanBoxValues(axis) {
+  const box = $(`#split${axis === 'col' ? 'Col' : 'Row'}PanelsBoxes`);
+  return [...box.querySelectorAll('input')].map((inp) => parseInt(inp.value, 10));
+}
+
+function validateSpanBoxes(axis, total) {
+  const box = $(`#split${axis === 'col' ? 'Col' : 'Row'}PanelsBoxes`);
+  const msg = $(`#split${axis === 'col' ? 'Col' : 'Row'}PanelsMsg`);
+  const vals = spanBoxValues(axis);
+  const inputs = [...box.querySelectorAll('input')];
+  const sum = vals.reduce((a, b) => a + (Number.isFinite(b) ? b : 0), 0);
+  const anyBad = vals.some((v) => !Number.isFinite(v) || v < 1);
+  const ok = !anyBad && sum === total;
+
+  inputs.forEach((inp, i) => {
+    const bad = !Number.isFinite(vals[i]) || vals[i] < 1;
+    inp.classList.toggle('invalid', bad || (!ok && !anyBad));
+  });
+  msg.classList.toggle('invalid', !ok);
+  if (ok) {
+    msg.textContent = `${sum} of ${total} panels ✓`;
+  } else if (anyBad) {
+    msg.textContent = `every segment needs at least 1 panel`;
+  } else {
+    const diff = sum - total;
+    msg.textContent = `${sum} of ${total} panels — ${Math.abs(diff)} too ${diff > 0 ? 'many' : 'few'}`;
+  }
+  return ok;
+}
+
+// Only a valid set is committed to the wall: an in-progress edit that doesn't
+// add up must not make the preview jump to some other layout.
+function applySpanBoxes(axis, count, total) {
+  const key = axis === 'col' ? 'colPanels' : 'rowPanels';
+  if (!validateSpanBoxes(axis, total)) return;
+  const w = curWall();
+  w.split[key] = spanBoxValues(axis);
+  updateSplitSummary();
+  renderSegmentOutputs();
+  push();
+  renderDisplays();
 }
 
 function updateSplitSummary() {
@@ -339,11 +422,6 @@ function setSplit(cols, rows) {
   renderDisplays();
 }
 
-function parseSpans(raw, count, total) {
-  const arr = String(raw).split(/[,\s]+/).map((x) => parseInt(x, 10)).filter((n) => Number.isFinite(n) && n > 0);
-  return window.LED_SPLIT_SPANS(arr, count, total);
-}
-
 function wireSplit() {
   $('#splitPreset').addEventListener('change', () => {
     const v = $('#splitPreset').value;
@@ -354,16 +432,7 @@ function wireSplit() {
   $('#splitCols').addEventListener('change', () => setSplit($('#splitCols').value, curWall().split.rows));
   $('#splitRows').addEventListener('change', () => setSplit(curWall().split.cols, $('#splitRows').value));
 
-  for (const [sel, key, dim] of [['#splitColPanels', 'colPanels', 'cols'], ['#splitRowPanels', 'rowPanels', 'rows']]) {
-    $(sel).addEventListener('change', () => {
-      const w = curWall();
-      const g = window.LED_WALL_GRID(w);
-      w.split[key] = parseSpans($(sel).value, w.split[dim], dim === 'cols' ? g.cols : g.rows);
-      syncSplitUI();
-      push();
-      renderDisplays();
-    });
-  }
+  // span boxes wire themselves as they are built (renderSpanBoxes)
 
   $('#splitOverlap').addEventListener('change', () => {
     const w = curWall();

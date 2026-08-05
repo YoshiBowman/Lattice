@@ -107,10 +107,16 @@
             <label>Outputs across<input type="number" id="splitCols" min="1" max="16" value="1"></label>
             <label>Outputs down<input type="number" id="splitRows" min="1" max="16" value="1"></label>
           </div>
-          <label id="splitColPanelsRow" style="display:none">Panels across, per segment (left→right)
-            <input type="text" id="splitColPanels" placeholder="9, 9" spellcheck="false"></label>
-          <label id="splitRowPanelsRow" style="display:none">Panels down, per segment (top→bottom)
-            <input type="text" id="splitRowPanels" placeholder="4, 7" spellcheck="false"></label>
+          <div id="splitColPanelsRow" class="span-group" style="display:none">
+            <div class="span-caption">Panels across, per segment <span class="span-dir">left → right</span></div>
+            <div id="splitColPanelsBoxes" class="span-boxes"></div>
+            <div id="splitColPanelsMsg" class="span-msg"></div>
+          </div>
+          <div id="splitRowPanelsRow" class="span-group" style="display:none">
+            <div class="span-caption">Panels down, per segment <span class="span-dir">top → bottom</span></div>
+            <div id="splitRowPanelsBoxes" class="span-boxes"></div>
+            <div id="splitRowPanelsMsg" class="span-msg"></div>
+          </div>
           <label id="splitOverlapRow" style="display:none">Overlap between feeds (px)
             <input type="number" id="splitOverlap" min="0" max="4096" value="0"></label>
           <div id="splitSummary" class="hint"></div>
