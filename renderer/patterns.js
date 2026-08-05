@@ -34,6 +34,42 @@
     return s;
   }
 
+  // A wall can be carried by more than one output — a processor feed per
+  // segment, joined back into one image on the wall. Segments tile the wall
+  // left-to-right, top-to-bottom; `overlap` is how many pixels adjacent
+  // segments share, for rigs where the feeds deliberately overlap rather than
+  // butt together. Overlap 0 (the default) is a plain tile.
+  function wallSegments(wall) {
+    const s = (wall && wall.split) || {};
+    const cols = Math.max(1, s.cols | 0 || 1);
+    const rows = Math.max(1, s.rows | 0 || 1);
+    const ov = Math.max(0, s.overlap | 0);
+    // each segment is (wall + shared pixels) / count, so the union is exactly
+    // the wall: origin i sits at i * (tile - overlap)
+    const tileW = (wall.width + (cols - 1) * ov) / cols;
+    const tileH = (wall.height + (rows - 1) * ov) / rows;
+    const out = [];
+    for (let r = 0; r < rows; r++) {
+      for (let c = 0; c < cols; c++) {
+        out.push({
+          index: r * cols + c,
+          col: c,
+          row: r,
+          x: Math.round(c * (tileW - ov)),
+          y: Math.round(r * (tileH - ov)),
+          w: Math.round(tileW),
+          h: Math.round(tileH),
+        });
+      }
+    }
+    return out;
+  }
+
+  const wallIsSplit = (wall) => {
+    const s = (wall && wall.split) || {};
+    return (s.cols | 0) > 1 || (s.rows | 0) > 1;
+  };
+
   // Panel grid geometry. Uniform mode repeats panelW/panelH; manual mode uses
   // explicit per-column widths and per-row heights (mixed cabinet sizes).
   function wallGrid(wall) {
@@ -959,6 +995,8 @@
   window.LED_FRAME_ANIMATED = frameAnimated;
   window.LED_WALL_GRID = wallGrid;
   window.LED_COL_LETTER = colLetter;
+  window.LED_WALL_SEGMENTS = wallSegments;
+  window.LED_WALL_IS_SPLIT = wallIsSplit;
   window.LED_DRAW_CABLING = drawCabling;
   window.LED_RUN_LOAD = runLoad;
   window.LED_RUN_COLORS = RUN_COLORS;

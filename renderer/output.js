@@ -23,7 +23,22 @@ function myOutputCfg() {
     posY: o.posY | 0,
     label: o.label || '',
     wallId: o.wallId,
+    segment: o.segment | 0,
   };
+}
+
+// Where this output crops into the wall. When the wall is split across several
+// outputs the segment decides it, so the operator never computes offsets by
+// hand; an unsplit wall keeps using the manual Crop X/Y.
+function myCrop() {
+  const oc = myOutputCfg();
+  const w = myWall();
+  if (window.LED_WALL_IS_SPLIT(w)) {
+    const segs = window.LED_WALL_SEGMENTS(w);
+    const seg = segs[oc.segment | 0];
+    if (seg) return { x: seg.x, y: seg.y };
+  }
+  return { x: oc.offsetX, y: oc.offsetY };
 }
 
 // The wall this output is assigned to (falls back to the first wall)
@@ -99,12 +114,13 @@ function blitTo(vctx, W, H) {
   vctx.fillRect(0, 0, W, H);
   // posX/posY shift where the image lands in the output frame — LED processors
   // often capture a region that doesn't start at the frame's top-left corner
-  const { mode, offsetX, offsetY, posX, posY } = myOutputCfg();
+  const { mode, posX, posY } = myOutputCfg();
   if (mode === '1to1') {
     // true pixel mapping — always crisp
+    const crop = myCrop();
     vctx.imageSmoothingEnabled = false;
-    const sx = Math.max(0, Math.min(offsetX, w - 1));
-    const sy = Math.max(0, Math.min(offsetY, h - 1));
+    const sx = Math.max(0, Math.min(crop.x, w - 1));
+    const sy = Math.max(0, Math.min(crop.y, h - 1));
     vctx.drawImage(wall, sx, sy, w - sx, h - sy, posX, posY, w - sx, h - sy);
     return;
   }

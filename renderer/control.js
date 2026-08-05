@@ -14,6 +14,8 @@ const WALL_DEFAULTS = {
   panelW: 172, panelH: 172, panelsX: 8, panelsY: 4,
   colWidths: [500, 500], rowHeights: [500, 500],
   custom: false, width: 1376, height: 688,
+  // a wall carried by more than one output: one processor feed per segment
+  split: { cols: 1, rows: 1, overlap: 0 },
 };
 
 // Cabling defaults follow industry norms: ~650k pixels per gigabit processor
@@ -32,6 +34,7 @@ function freshWall(id, name, over) {
     ...WALL_DEFAULTS,
     colWidths: WALL_DEFAULTS.colWidths.slice(),
     rowHeights: WALL_DEFAULTS.rowHeights.slice(),
+    split: { ...WALL_DEFAULTS.split },
     cabling: emptyCabling(),
     id,
     name,
@@ -71,6 +74,7 @@ function normalizeConfig(saved) {
   const walls = (saved.walls && saved.walls.length ? saved.walls : DEFAULTS.walls)
     .map((w, i) => {
       const merged = { ...freshWall('w' + (i + 1), `Wall ${i + 1}`), ...w };
+      merged.split = { cols: 1, rows: 1, overlap: 0, ...(w.split || {}) };
       // walls saved before cabling existed, or with a partial layer
       const base = emptyCabling();
       merged.cabling = {
@@ -267,6 +271,100 @@ function previewWallInWindow(w) {
   window.ledwall.startOutput(id, { width: w.width, height: w.height, label: w.name });
 }
 
+// ---------- wall split across outputs ----------
+
+function syncSplitUI() {
+  const w = curWall();
+  const s = w.split;
+  const key = `${s.cols}x${s.rows}`;
+  const sel = $('#splitPreset');
+  const known = [...sel.options].some((o) => o.value === key);
+  sel.value = known ? key : 'custom';
+  const custom = sel.value === 'custom';
+  $('#splitCustomRow').style.display = custom ? '' : 'none';
+  $('#splitCols').value = s.cols;
+  $('#splitRows').value = s.rows;
+  $('#splitOverlap').value = s.overlap;
+  const split = window.LED_WALL_IS_SPLIT(w);
+  $('#splitOverlapRow').style.display = split ? '' : 'none';
+  updateSplitSummary();
+}
+
+function updateSplitSummary() {
+  const w = curWall();
+  resolveWall(w);
+  const el = $('#splitSummary');
+  if (!window.LED_WALL_IS_SPLIT(w)) {
+    el.textContent = 'The whole wall goes to one output.';
+    el.style.color = '';
+    return;
+  }
+  const segs = window.LED_WALL_SEGMENTS(w);
+  const g = window.LED_WALL_GRID(w);
+  // A feed boundary that lands mid-panel is almost always a mapping mistake —
+  // the panel would be fed by two different outputs.
+  const seams = new Set(g.xs);
+  const vseams = new Set(g.ys);
+  const bad = [];
+  segs.forEach((sg) => {
+    if (sg.x > 0 && !seams.has(sg.x)) bad.push(`x=${sg.x}`);
+    if (sg.y > 0 && !vseams.has(sg.y)) bad.push(`y=${sg.y}`);
+  });
+  let txt = `${segs.length} segments of ${segs[0].w} × ${segs[0].h} px`;
+  if (w.split.overlap > 0) txt += ` sharing ${w.split.overlap} px`;
+  if (bad.length) {
+    el.textContent = `${txt} — ⚠ boundary falls mid-panel at ${[...new Set(bad)].join(', ')}`;
+    el.style.color = 'var(--danger)';
+  } else {
+    el.textContent = `${txt} — boundaries land on panel seams`;
+    el.style.color = 'var(--accent)';
+  }
+}
+
+function setSplit(cols, rows) {
+  const w = curWall();
+  w.split.cols = Math.max(1, Math.min(16, cols | 0));
+  w.split.rows = Math.max(1, Math.min(16, rows | 0));
+  if (!window.LED_WALL_IS_SPLIT(w)) w.split.overlap = 0;
+  syncSplitUI();
+  push();
+  renderDisplays();
+}
+
+function wireSplit() {
+  $('#splitPreset').addEventListener('change', () => {
+    const v = $('#splitPreset').value;
+    if (v === 'custom') { $('#splitCustomRow').style.display = ''; return; }
+    const [c, r] = v.split('x').map(Number);
+    setSplit(c, r);
+  });
+  $('#splitCols').addEventListener('change', () => setSplit($('#splitCols').value, curWall().split.rows));
+  $('#splitRows').addEventListener('change', () => setSplit(curWall().split.cols, $('#splitRows').value));
+  $('#splitOverlap').addEventListener('change', () => {
+    const w = curWall();
+    w.split.overlap = Math.max(0, Math.min(4096, $('#splitOverlap').value | 0));
+    $('#splitOverlap').value = w.split.overlap;
+    push();
+    renderDisplays();
+  });
+}
+
+// Next segment of this wall that no other output has claimed, so assigning a
+// second output to a split wall lands on the other half rather than duplicating.
+function nextFreeSegment(wallId, exceptId) {
+  const w = cfg.walls.find((x) => x.id === wallId);
+  if (!w || !window.LED_WALL_IS_SPLIT(w)) return 0;
+  const total = window.LED_WALL_SEGMENTS(w).length;
+  const taken = new Set();
+  Object.keys(cfg.outputs).forEach((k) => {
+    if (String(k) === String(exceptId)) return;
+    const o = cfg.outputs[k];
+    if (o.wallId === wallId) taken.add(o.segment | 0);
+  });
+  for (let i = 0; i < total; i++) if (!taken.has(i)) return i;
+  return 0;
+}
+
 // ---------- wall -> output assignment dropdown ----------
 
 function rebuildWallOutputSelect() {
@@ -326,6 +424,8 @@ function wireWallOutputSelect() {
       if (!dev) return;
       const oc = dlCfgFor(dev);           // seeds dlMode/dlRange and 1:1 defaults
       oc.wallId = w.id;
+      oc.assigned = true;
+      oc.segment = nextFreeSegment(w.id, id);
       push();
       renderDisplays();
       renderDeckLink();
@@ -335,6 +435,8 @@ function wireWallOutputSelect() {
 
     const oc = outCfgFor(id);
     oc.wallId = w.id;
+    oc.assigned = true;
+    oc.segment = nextFreeSegment(w.id, id);
     push();
     renderDisplays();
     if (!activeSet.has(String(id))) {
@@ -458,6 +560,37 @@ function drawPreviewFrame(t) {
   if (preview.width !== previewCfg.wall.width) preview.width = previewCfg.wall.width;
   if (preview.height !== previewCfg.wall.height) preview.height = previewCfg.wall.height;
   renderPreviewFrame(previewCtx, previewCfg, t);
+  drawSegmentGuides();
+}
+
+// Preview-only: shows where the feeds divide the wall. Deliberately not part of
+// the rendered frame — this is a planning aid, not something to send to a wall.
+function drawSegmentGuides() {
+  const w = curWall();
+  if (!window.LED_WALL_IS_SPLIT(w)) return;
+  const scale = preview.width / w.width;
+  const segs = window.LED_WALL_SEGMENTS(w);
+  const ctx = previewCtx;
+  ctx.save();
+  segs.forEach((sg, i) => {
+    const x = sg.x * scale, y = sg.y * scale;
+    const sw = sg.w * scale, sh = sg.h * scale;
+    ctx.strokeStyle = w.split.overlap > 0 ? 'rgba(245,166,35,0.95)' : 'rgba(63,169,245,0.95)';
+    ctx.setLineDash([6, 4]);
+    ctx.lineWidth = 2;
+    ctx.strokeRect(x + 1, y + 1, sw - 2, sh - 2);
+    ctx.setLineDash([]);
+    const fs = Math.max(10, Math.min(18, sh * 0.16));
+    const tag = String(i + 1);
+    ctx.font = `bold ${fs}px Menlo, monospace`;
+    ctx.textBaseline = 'top';
+    ctx.fillStyle = 'rgba(0,0,0,0.7)';
+    ctx.fillRect(x + 4, y + 4, fs * 1.5, fs * 1.4);
+    ctx.fillStyle = w.split.overlap > 0 ? '#f5a623' : '#3fa9f5';
+    ctx.textAlign = 'center';
+    ctx.fillText(tag, x + 4 + fs * 0.75, y + 4 + fs * 0.2);
+  });
+  ctx.restore();
 }
 
 function startPreview() {
@@ -478,7 +611,7 @@ function outCfgFor(id) {
   return cfg.outputs[id];
 }
 
-function wallSelectFor(oc) {
+function wallSelectFor(oc, key) {
   const sel = document.createElement('select');
   for (const w of cfg.walls) {
     const opt = document.createElement('option');
@@ -488,7 +621,13 @@ function wallSelectFor(oc) {
   }
   sel.value = cfg.walls.some((w) => w.id === oc.wallId) ? oc.wallId : cfg.walls[0].id;
   sel.title = 'Which wall this output displays';
-  sel.addEventListener('change', () => { oc.wallId = sel.value; push(); });
+  sel.addEventListener('change', () => {
+    oc.wallId = sel.value;
+    oc.assigned = true;
+    oc.segment = nextFreeSegment(oc.wallId, key);
+    push();
+    renderDisplays();
+  });
   return sel;
 }
 
@@ -606,7 +745,33 @@ function appendOutputControls(ctl, key, oc, nameEl, opts) {
   });
   ctl.appendChild(field('Label', labelInput));
 
-  ctl.appendChild(field('Wall', wallSelectFor(oc), 'Which wall this output displays'));
+  ctl.appendChild(field('Wall', wallSelectFor(oc, key), 'Which wall this output displays'));
+
+  // When the assigned wall is carried by several outputs, this picks which
+  // piece this one shows — and the crop follows from it, so nobody works out
+  // pixel offsets by hand.
+  const assignedWall = cfg.walls.find((w) => w.id === oc.wallId) || cfg.walls[0];
+  if (window.LED_WALL_IS_SPLIT(assignedWall)) {
+    const segs = window.LED_WALL_SEGMENTS(assignedWall);
+    const segSel = document.createElement('select');
+    segs.forEach((sg, i) => {
+      const o = document.createElement('option');
+      o.value = String(i);
+      const where = assignedWall.split.rows > 1 && assignedWall.split.cols > 1
+        ? ` (col ${sg.col + 1}, row ${sg.row + 1})` : '';
+      o.textContent = `${i + 1} of ${segs.length}${where}`;
+      segSel.appendChild(o);
+    });
+    segSel.value = String(Math.min(oc.segment | 0, segs.length - 1));
+    segSel.addEventListener('change', () => {
+      oc.segment = segSel.value | 0;
+      push();
+      renderDisplays();
+    });
+    const seg = segs[Math.min(oc.segment | 0, segs.length - 1)];
+    ctl.appendChild(field('Segment', segSel,
+      `Which piece of ${assignedWall.name} this output carries — crop ${seg.x},${seg.y}`));
+  }
 
   appendTypeSpecificControls(ctl, oc, opts);
 
@@ -621,7 +786,9 @@ function appendOutputControls(ctl, key, oc, nameEl, opts) {
   modeSel.addEventListener('change', () => { oc.mode = modeSel.value; renderDisplays(); push(); });
   ctl.appendChild(field('Scale', modeSel));
 
-  if (oc.mode === '1to1') {
+  // manual crop only matters when the wall isn't split — with segments the
+  // crop is derived, and showing both would let them contradict each other
+  if (oc.mode === '1to1' && !window.LED_WALL_IS_SPLIT(assignedWall)) {
     for (const key2 of ['offsetX', 'offsetY']) {
       const inp = document.createElement('input');
       inp.type = 'number'; inp.min = '0'; inp.step = '1'; inp.value = oc[key2];
@@ -820,7 +987,28 @@ function renderDeckLink() {
   // no SDI entries in the wall dropdown.
   if (!deckLinkInfo.available || !deckLinkInfo.devices.length) { rebuildWallOutputSelect(); return; }
 
-  for (const dev of deckLinkInfo.devices) {
+  // Eight sub-devices would otherwise bury the panel. Show only the ones that
+  // matter right now: those assigned to the wall being edited, plus anything
+  // live or errored — nothing transmitting should ever be invisible.
+  const relevant = deckLinkInfo.devices.filter((dev) => {
+    const id = dlOutputId(dev);
+    const oc = cfg.outputs[id];
+    const st = deckLinkStatus.get(id) || {};
+    if (deckLinkActive.has(id) || st.state === 'error') return true;
+    return !!(oc && oc.assigned && oc.wallId === cfg.selectedWall);
+  });
+
+  if (!relevant.length) {
+    const hint = document.createElement('div');
+    hint.className = 'hint';
+    hint.textContent = `${deckLinkInfo.devices.length} SDI outputs available — assign one to `
+      + `${curWall().name} with “Send to output”.`;
+    box.appendChild(hint);
+    rebuildWallOutputSelect();
+    return;
+  }
+
+  for (const dev of relevant) {
     const id = dlOutputId(dev);
     const oc = dlCfgFor(dev);
     const st = deckLinkStatus.get(id) || {};
@@ -1666,6 +1854,7 @@ function syncWallInputs() {
   $('#wallW').value = w.width;
   $('#wallH').value = w.height;
   syncWallModeUI();
+  syncSplitUI();
   rebuildWallOutputSelect();
 }
 
@@ -1862,6 +2051,7 @@ function wireInputs() {
   $('#saveShowBtn').addEventListener('click', saveShowFile);
   $('#loadShowBtn').addEventListener('click', loadShowFile);
   wireWallOutputSelect();
+  wireSplit();
   wireCabling();
 }
 
