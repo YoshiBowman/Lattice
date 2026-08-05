@@ -21,6 +21,20 @@
     ctx.fillRect(0, 0, cfg.wall.width, cfg.wall.height);
   }
 
+  // One clock for every window. performance.now() is measured from each
+  // document's own load, so two output windows opened seconds apart animate
+  // seconds out of phase — the radar sweep sits at a different angle in each
+  // feed. Date.now() is absolute and shared by every process; the epoch just
+  // keeps the numbers small enough to stay precise.
+  const ANIM_EPOCH = 1735689600000; // 2025-01-01
+  const now = () => Date.now() - ANIM_EPOCH;
+
+  // Animations that advance in pixels per second must be expressed relative to
+  // the wall, or they run at different speeds wherever the canvas is a
+  // different size — most visibly the scaled preview versus a real output.
+  // Rates below are quoted for a 1920px-wide wall and scaled from there.
+  const rate = (wall, perSecondAt1920) => perSecondAt1920 * (wall.width / 1920);
+
   function hexToRgba(hex, a) {
     const n = parseInt(hex.slice(1), 16);
     return `rgba(${(n >> 16) & 255},${(n >> 8) & 255},${n & 255},${a})`;
@@ -431,6 +445,7 @@
         const { width: w, height: h } = cfg.wall;
         const speed = cfg.pattern.speed || 1; // speed 1 = one revolution per 4s
         const fg = cfg.pattern.fg;
+        // radius and angle are already wall-relative, so this one scales
         fillBG(ctx, cfg);
         const cx = w / 2, cy = h / 2;
         const R = Math.hypot(w, h) / 2; // reach the corners
@@ -494,7 +509,7 @@
         fillBG(ctx, cfg);
         const span = dir === 'h' ? w : dir === 'v' ? h : Math.hypot(w, h);
         const trail = Math.max(40, span * 0.25);
-        const pos = ((t / 1000) * 250 * speed) % (span + trail);
+        const pos = ((t / 1000) * rate(cfg.wall, 250) * speed) % (span + trail);
         ctx.save();
         if (dir === 'v') { ctx.translate(w, 0); ctx.rotate(Math.PI / 2); }
         else if (dir === 'd') { ctx.rotate(Math.PI / 4); }
@@ -539,13 +554,13 @@
         ctx.fillStyle = cfg.pattern.fg;
         // bouncing box
         const box = Math.max(8, Math.floor(Math.min(w, h) / 8));
-        const px = (t / 1000) * 120 * speed;
+        const px = (t / 1000) * rate(cfg.wall, 120) * speed;
         const rangeX = Math.max(1, w - box), rangeY = Math.max(1, h - box);
         const bx = Math.abs(((px) % (rangeX * 2)) - rangeX);
         const by = Math.abs(((px * 0.7) % (rangeY * 2)) - rangeY);
         ctx.fillRect(Math.floor(bx), Math.floor(by), box, box);
         // sweeping vertical bar for judder
-        const barX = Math.floor(((t / 1000) * 60 * speed) % w);
+        const barX = Math.floor(((t / 1000) * rate(cfg.wall, 60) * speed) % w);
         ctx.fillRect(barX, 0, 2, h);
         // frame counter
         const fs = Math.max(10, Math.floor(Math.min(w, h) / 14));
@@ -614,7 +629,7 @@
         const dir = o.dir || 'h';
         const span = dir === 'h' ? w : dir === 'v' ? h : Math.hypot(w, h);
         const trail = Math.max(40, span * 0.25);
-        const pos = ((t / 1000) * 250 * (o.speed || 1)) % (span + trail);
+        const pos = ((t / 1000) * rate(cfg.wall, 250) * (o.speed || 1)) % (span + trail);
         ctx.save();
         if (dir === 'v') { ctx.translate(w, 0); ctx.rotate(Math.PI / 2); }
         else if (dir === 'd') { ctx.rotate(Math.PI / 4); }
@@ -1036,6 +1051,7 @@
   window.LED_WALL_SEGMENTS = wallSegments;
   window.LED_WALL_IS_SPLIT = wallIsSplit;
   window.LED_SPLIT_SPANS = splitSpans;
+  window.LED_NOW = now;
   window.LED_DRAW_CABLING = drawCabling;
   window.LED_RUN_LOAD = runLoad;
   window.LED_RUN_COLORS = RUN_COLORS;

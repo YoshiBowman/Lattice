@@ -172,10 +172,11 @@ function apply() {
   updateLabelOverlay();
   if (rafId !== null) { cancelAnimationFrame(rafId); rafId = null; }
   if (window.LED_FRAME_ANIMATED(cfg)) {
-    const loop = (t) => { renderFrame(t); rafId = requestAnimationFrame(loop); };
+    // shared wall-clock time, not the rAF timestamp: every window must be in phase
+    const loop = () => { renderFrame(window.LED_NOW()); rafId = requestAnimationFrame(loop); };
     rafId = requestAnimationFrame(loop);
   } else {
-    renderFrame(performance.now());
+    renderFrame(window.LED_NOW());
   }
 }
 

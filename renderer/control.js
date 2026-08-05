@@ -654,10 +654,10 @@ function startPreview() {
   rebuildPreviewCfg();
   if (previewRaf !== null) { cancelAnimationFrame(previewRaf); previewRaf = null; }
   if (window.LED_FRAME_ANIMATED(cfg)) {
-    const loop = (t) => { drawPreviewFrame(t); previewRaf = requestAnimationFrame(loop); };
+    const loop = () => { drawPreviewFrame(window.LED_NOW()); previewRaf = requestAnimationFrame(loop); };
     previewRaf = requestAnimationFrame(loop);
   } else {
-    drawPreviewFrame(performance.now());
+    drawPreviewFrame(window.LED_NOW());
   }
 }
 
@@ -1816,7 +1816,7 @@ function exportWallPNG() {
   const c = document.createElement('canvas');
   c.width = w.width;
   c.height = w.height;
-  window.LED_RENDER_FRAME(c.getContext('2d'), { wall: w, pattern: cfg.pattern, overlay: cfg.overlay, readout: cfg.readout }, performance.now());
+  window.LED_RENDER_FRAME(c.getContext('2d'), { wall: w, pattern: cfg.pattern, overlay: cfg.overlay, readout: cfg.readout }, window.LED_NOW());
   const a = document.createElement('a');
   const safeName = (w.name || 'wall').replace(/[^\w-]+/g, '_');
   a.download = `lattice-${safeName}-${cfg.pattern.type}-${w.width}x${w.height}.png`;
