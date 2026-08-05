@@ -94,12 +94,13 @@ git tag v<version> && git push origin main --tags
   Toggles for a wall-dimensions line (px · panels · meters) and the backdrop box; five font
   choices; optional **logo PNG** rendered under the text. All of it shows identically on
   outputs, the preview and exports.
-- **One wall across several outputs** — set "Split across outputs" on a wall (2 across,
-  2×2, or custom, with optional overlap for rigs whose feeds share pixels) and Lattice
-  divides it into segments. Assign each output a segment and its crop follows
-  automatically — no working out pixel offsets by hand. The preview draws the feed
-  boundaries, and warns when one lands mid-panel instead of on a seam. Assigning a second
-  output to the same wall claims the next free segment.
+- **One wall across several outputs** — set "Split across outputs" on a wall and Lattice
+  divides it into segments **measured in panels**, so a 9 × 11 wall can go out as a 9 × 4
+  top and a 9 × 7 bottom rather than being cut in half. Boundaries therefore always land on
+  panel seams. Wall Setup then shows **one dropdown per segment** — send segment 1 to an SDI
+  port, segment 2 to a display — and each output's crop follows from its segment, so nobody
+  works out pixel offsets by hand. Optional overlap covers rigs whose feeds deliberately
+  share pixels, and the preview draws the numbered feed boundaries.
 - **Output position** — Pos X/Y on every output shifts where the image lands in the frame
   (LED processors often capture a region that doesn't start at the frame's top-left).
   Works in every scale mode; in 1:1, Crop X/Y picks the wall region and Pos X/Y places it.

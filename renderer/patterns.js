@@ -39,26 +39,64 @@
   // left-to-right, top-to-bottom; `overlap` is how many pixels adjacent
   // segments share, for rigs where the feeds deliberately overlap rather than
   // butt together. Overlap 0 (the default) is a plain tile.
+  // Segments are measured in PANELS, not equal fractions: a 9 × 11 wall can be
+  // split into a 9 × 4 top and a 9 × 7 bottom, because that is how feeds
+  // actually divide. Boundaries therefore land on panel seams by construction.
+  //
+  // `spans` distributes `total` panels over `count` segments; anything missing
+  // or inconsistent falls back to as even a split as the panel count allows.
+  function splitSpans(spans, count, total) {
+    let a = Array.isArray(spans) ? spans.slice(0, count).map((n) => Math.max(1, n | 0)) : [];
+    const sum = a.reduce((x, y) => x + y, 0);
+    if (a.length !== count || sum !== total) {
+      a = [];
+      let left = total;
+      for (let i = 0; i < count; i++) {
+        const take = Math.max(1, Math.min(Math.round(left / (count - i)), left - (count - i - 1)));
+        a.push(take);
+        left -= take;
+      }
+    }
+    return a;
+  }
+
   function wallSegments(wall) {
+    const g = wallGrid(wall);
     const s = (wall && wall.split) || {};
-    const cols = Math.max(1, s.cols | 0 || 1);
-    const rows = Math.max(1, s.rows | 0 || 1);
+    const cols = Math.max(1, Math.min(g.cols, s.cols | 0 || 1));
+    const rows = Math.max(1, Math.min(g.rows, s.rows | 0 || 1));
     const ov = Math.max(0, s.overlap | 0);
-    // each segment is (wall + shared pixels) / count, so the union is exactly
-    // the wall: origin i sits at i * (tile - overlap)
-    const tileW = (wall.width + (cols - 1) * ov) / cols;
-    const tileH = (wall.height + (rows - 1) * ov) / rows;
+    const colSpans = splitSpans(s.colPanels, cols, g.cols);
+    const rowSpans = splitSpans(s.rowPanels, rows, g.rows);
+
+    const cStart = [];
+    const rStart = [];
+    let acc = 0;
+    for (const n of colSpans) { cStart.push(acc); acc += n; }
+    acc = 0;
+    for (const n of rowSpans) { rStart.push(acc); acc += n; }
+
     const out = [];
     for (let r = 0; r < rows; r++) {
       for (let c = 0; c < cols; c++) {
+        const x0 = g.xs[cStart[c]];
+        const x1 = g.xs[cStart[c] + colSpans[c]];
+        const y0 = g.ys[rStart[r]];
+        const y1 = g.ys[rStart[r] + rowSpans[r]];
+        let x = x0, y = y0, w = x1 - x0, h = y1 - y0;
+        // overlap extends each feed into its neighbours on the inner edges,
+        // which is what a rig sharing pixels between feeds actually does
+        if (ov) {
+          if (c > 0) { x -= ov; w += ov; }
+          if (c < cols - 1) w += ov;
+          if (r > 0) { y -= ov; h += ov; }
+          if (r < rows - 1) h += ov;
+        }
         out.push({
-          index: r * cols + c,
-          col: c,
-          row: r,
-          x: Math.round(c * (tileW - ov)),
-          y: Math.round(r * (tileH - ov)),
-          w: Math.round(tileW),
-          h: Math.round(tileH),
+          index: r * cols + c, col: c, row: r,
+          x, y, w, h,
+          panelsX: colSpans[c], panelsY: rowSpans[r],
+          firstCol: cStart[c], firstRow: rStart[r],
         });
       }
     }
@@ -997,6 +1035,7 @@
   window.LED_COL_LETTER = colLetter;
   window.LED_WALL_SEGMENTS = wallSegments;
   window.LED_WALL_IS_SPLIT = wallIsSplit;
+  window.LED_SPLIT_SPANS = splitSpans;
   window.LED_DRAW_CABLING = drawCabling;
   window.LED_RUN_LOAD = runLoad;
   window.LED_RUN_COLORS = RUN_COLORS;

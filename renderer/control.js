@@ -15,7 +15,7 @@ const WALL_DEFAULTS = {
   colWidths: [500, 500], rowHeights: [500, 500],
   custom: false, width: 1376, height: 688,
   // a wall carried by more than one output: one processor feed per segment
-  split: { cols: 1, rows: 1, overlap: 0 },
+  split: { cols: 1, rows: 1, overlap: 0, colPanels: [], rowPanels: [] },
 };
 
 // Cabling defaults follow industry norms: ~650k pixels per gigabit processor
@@ -34,7 +34,7 @@ function freshWall(id, name, over) {
     ...WALL_DEFAULTS,
     colWidths: WALL_DEFAULTS.colWidths.slice(),
     rowHeights: WALL_DEFAULTS.rowHeights.slice(),
-    split: { ...WALL_DEFAULTS.split },
+    split: { ...WALL_DEFAULTS.split, colPanels: [], rowPanels: [] },
     cabling: emptyCabling(),
     id,
     name,
@@ -74,7 +74,7 @@ function normalizeConfig(saved) {
   const walls = (saved.walls && saved.walls.length ? saved.walls : DEFAULTS.walls)
     .map((w, i) => {
       const merged = { ...freshWall('w' + (i + 1), `Wall ${i + 1}`), ...w };
-      merged.split = { cols: 1, rows: 1, overlap: 0, ...(w.split || {}) };
+      merged.split = { cols: 1, rows: 1, overlap: 0, colPanels: [], rowPanels: [], ...(w.split || {}) };
       // walls saved before cabling existed, or with a partial layer
       const base = emptyCabling();
       merged.cabling = {
@@ -257,78 +257,91 @@ function addWall() {
 }
 
 // Open a wall in a virtual output window at native wall resolution, 1:1
-function previewWallInWindow(w) {
+// Opens a wall — or one segment of it — in a virtual output window. A segment
+// window is sized to that feed and pinned to 1:1, since it stands in for a
+// processor feed rather than a view of the whole wall.
+function previewWallInWindow(w, segment, seg) {
   resolveWalls();
   let id;
   do { id = 'v' + Date.now().toString(36) + (vSeq++); } while (cfg.virtualOutputs.some((x) => x.id === id));
-  cfg.virtualOutputs.push({ id, width: w.width, height: w.height });
+  const width = seg ? seg.w : w.width;
+  const height = seg ? seg.h : w.height;
+  const label = seg ? `${w.name} — segment ${segment + 1}` : w.name;
+  cfg.virtualOutputs.push({ id, width, height });
   const oc = outCfgFor(id);
   oc.wallId = w.id;
-  oc.mode = 'fit'; // whole wall visible however the window is sized
-  oc.label = w.name;
+  oc.assigned = true;
+  oc.segment = segment | 0;
+  oc.mode = seg ? '1to1' : 'fit'; // whole wall: fit; one feed: true pixels
+  oc.label = label;
   push();
   renderDisplays();
-  window.ledwall.startOutput(id, { width: w.width, height: w.height, label: w.name });
+  window.ledwall.startOutput(id, { width, height, label });
 }
 
 // ---------- wall split across outputs ----------
 
 function syncSplitUI() {
   const w = curWall();
+  resolveWall(w);
   const s = w.split;
+  const g = window.LED_WALL_GRID(w);
   const key = `${s.cols}x${s.rows}`;
   const sel = $('#splitPreset');
   const known = [...sel.options].some((o) => o.value === key);
   sel.value = known ? key : 'custom';
-  const custom = sel.value === 'custom';
-  $('#splitCustomRow').style.display = custom ? '' : 'none';
+  $('#splitCustomRow').style.display = sel.value === 'custom' ? '' : 'none';
   $('#splitCols').value = s.cols;
   $('#splitRows').value = s.rows;
   $('#splitOverlap').value = s.overlap;
+
   const split = window.LED_WALL_IS_SPLIT(w);
+  // panel spans only mean something along an axis that is actually divided
+  $('#splitColPanelsRow').style.display = s.cols > 1 ? '' : 'none';
+  $('#splitRowPanelsRow').style.display = s.rows > 1 ? '' : 'none';
   $('#splitOverlapRow').style.display = split ? '' : 'none';
+  $('#splitColPanels').value = window.LED_SPLIT_SPANS(s.colPanels, s.cols, g.cols).join(', ');
+  $('#splitRowPanels').value = window.LED_SPLIT_SPANS(s.rowPanels, s.rows, g.rows).join(', ');
+
   updateSplitSummary();
+  renderSegmentOutputs();
 }
 
 function updateSplitSummary() {
   const w = curWall();
   resolveWall(w);
   const el = $('#splitSummary');
+  const g = window.LED_WALL_GRID(w);
   if (!window.LED_WALL_IS_SPLIT(w)) {
-    el.textContent = 'The whole wall goes to one output.';
+    el.textContent = `The whole wall — ${g.cols} × ${g.rows} panels — goes to one output.`;
     el.style.color = '';
     return;
   }
+  // Segments are panel-aligned by construction, so the only thing worth
+  // reporting is what each feed actually carries.
   const segs = window.LED_WALL_SEGMENTS(w);
-  const g = window.LED_WALL_GRID(w);
-  // A feed boundary that lands mid-panel is almost always a mapping mistake —
-  // the panel would be fed by two different outputs.
-  const seams = new Set(g.xs);
-  const vseams = new Set(g.ys);
-  const bad = [];
-  segs.forEach((sg) => {
-    if (sg.x > 0 && !seams.has(sg.x)) bad.push(`x=${sg.x}`);
-    if (sg.y > 0 && !vseams.has(sg.y)) bad.push(`y=${sg.y}`);
-  });
-  let txt = `${segs.length} segments of ${segs[0].w} × ${segs[0].h} px`;
-  if (w.split.overlap > 0) txt += ` sharing ${w.split.overlap} px`;
-  if (bad.length) {
-    el.textContent = `${txt} — ⚠ boundary falls mid-panel at ${[...new Set(bad)].join(', ')}`;
-    el.style.color = 'var(--danger)';
-  } else {
-    el.textContent = `${txt} — boundaries land on panel seams`;
-    el.style.color = 'var(--accent)';
-  }
+  const parts = segs.map((sg, i) => `${i + 1}: ${sg.panelsX}×${sg.panelsY} panels (${sg.w}×${sg.h} px)`);
+  el.textContent = parts.join('   ') + (w.split.overlap > 0 ? `   · sharing ${w.split.overlap} px` : '');
+  el.style.color = 'var(--accent)';
 }
 
 function setSplit(cols, rows) {
   const w = curWall();
-  w.split.cols = Math.max(1, Math.min(16, cols | 0));
-  w.split.rows = Math.max(1, Math.min(16, rows | 0));
+  const g = window.LED_WALL_GRID(w);
+  w.split.cols = Math.max(1, Math.min(g.cols, cols | 0));
+  w.split.rows = Math.max(1, Math.min(g.rows, rows | 0));
+  // re-derive spans for the new shape rather than carrying stale ones over
+  w.split.colPanels = window.LED_SPLIT_SPANS([], w.split.cols, g.cols);
+  w.split.rowPanels = window.LED_SPLIT_SPANS([], w.split.rows, g.rows);
   if (!window.LED_WALL_IS_SPLIT(w)) w.split.overlap = 0;
   syncSplitUI();
   push();
   renderDisplays();
+}
+
+function parseSpans(raw, count, total) {
+  const arr = String(raw).split(/[,\s]+/).map((x) => parseInt(x, 10)).filter((n) => Number.isFinite(n) && n > 0);
+  return window.LED_SPLIT_SPANS(arr, count, total);
 }
 
 function wireSplit() {
@@ -340,10 +353,23 @@ function wireSplit() {
   });
   $('#splitCols').addEventListener('change', () => setSplit($('#splitCols').value, curWall().split.rows));
   $('#splitRows').addEventListener('change', () => setSplit(curWall().split.cols, $('#splitRows').value));
+
+  for (const [sel, key, dim] of [['#splitColPanels', 'colPanels', 'cols'], ['#splitRowPanels', 'rowPanels', 'rows']]) {
+    $(sel).addEventListener('change', () => {
+      const w = curWall();
+      const g = window.LED_WALL_GRID(w);
+      w.split[key] = parseSpans($(sel).value, w.split[dim], dim === 'cols' ? g.cols : g.rows);
+      syncSplitUI();
+      push();
+      renderDisplays();
+    });
+  }
+
   $('#splitOverlap').addEventListener('change', () => {
     const w = curWall();
     w.split.overlap = Math.max(0, Math.min(4096, $('#splitOverlap').value | 0));
     $('#splitOverlap').value = w.split.overlap;
+    syncSplitUI();
     push();
     renderDisplays();
   });
@@ -367,88 +393,119 @@ function nextFreeSegment(wallId, exceptId) {
 
 // ---------- wall -> output assignment dropdown ----------
 
-function rebuildWallOutputSelect() {
-  const sel = $('#wallOutput');
-  if (!sel) return;
+// One dropdown per segment. An unsplit wall has exactly one, labelled
+// 'Send to output'; a wall split across N feeds gets N, so the operator picks
+// where each piece goes without touching the Outputs panel.
+function renderSegmentOutputs() {
+  const box = $('#segmentOutputs');
+  if (!box) return;
   const w = curWall();
-  sel.innerHTML = '';
-  const add = (v, label) => {
-    const o = document.createElement('option');
-    o.value = v;
-    o.textContent = label;
-    sel.appendChild(o);
-  };
-  add('', '— choose output —');
-  displays.forEach((d) => add('d:' + d.id, `Display ${d.index}: ${d.label}`));
-  // SDI sits in the same list as everything else: sending a wall to a DeckLink
-  // port should be the same gesture as sending it to a display.
-  (deckLinkInfo.devices || []).forEach((dev) => {
-    const id = dlOutputId(dev);
-    const oc = cfg.outputs[id];
-    add('s:' + id, `SDI: ${(oc && oc.label) || dev.name}`);
-  });
-  cfg.virtualOutputs.forEach((v, i) => {
-    const oc = cfg.outputs[v.id];
-    add('v:' + v.id, `V${i + 1}: ${(oc && oc.label) || `${v.width}×${v.height}`}`);
-  });
-  add('new', '+ New virtual window (wall size)');
-  // show the output currently assigned to this wall (prefer a live one)
+  resolveWall(w);
+  const segs = window.LED_WALL_SEGMENTS(w);
   const isLive = (k) => activeSet.has(String(k)) || deckLinkActive.has(String(k));
-  const assigned = Object.keys(cfg.outputs)
-    .filter((k) => cfg.outputs[k].wallId === w.id)
-    .sort((a, b) => (isLive(b) ? 1 : 0) - (isLive(a) ? 1 : 0))[0];
-  if (assigned !== undefined) {
-    const prefix = String(assigned).startsWith('dl:') ? 's:'
-      : cfg.virtualOutputs.some((v) => String(v.id) === String(assigned)) ? 'v:' : 'd:';
-    sel.value = prefix + assigned;
-    if (sel.selectedIndex === -1) sel.value = ''; // stale id (display unplugged)
+  box.innerHTML = '';
+
+  segs.forEach((sg, i) => {
+    const lab = document.createElement('label');
+    lab.textContent = segs.length === 1
+      ? 'Send to output'
+      : `Segment ${i + 1} → output   (${sg.panelsX}×${sg.panelsY} panels)`;
+
+    const sel = document.createElement('select');
+    sel.dataset.segment = String(i);
+    const add = (v, label) => {
+      const o = document.createElement('option');
+      o.value = v;
+      o.textContent = label;
+      sel.appendChild(o);
+    };
+    add('', '— choose output —');
+    displays.forEach((d) => add('d:' + d.id, `Display ${d.index}: ${d.label}`));
+    // SDI sits in the same list as everything else: sending a wall to a
+    // DeckLink port should be the same gesture as sending it to a display.
+    (deckLinkInfo.devices || []).forEach((dev) => {
+      const id = dlOutputId(dev);
+      const oc = cfg.outputs[id];
+      add('s:' + id, `SDI: ${(oc && oc.label) || dev.name}`);
+    });
+    cfg.virtualOutputs.forEach((v, n) => {
+      const oc = cfg.outputs[v.id];
+      add('v:' + v.id, `V${n + 1}: ${(oc && oc.label) || `${v.width}×${v.height}`}`);
+    });
+    add('new', '+ New virtual window (segment size)');
+
+    // whichever output currently carries THIS segment of THIS wall
+    const owner = Object.keys(cfg.outputs)
+      .filter((k) => cfg.outputs[k].wallId === w.id && (cfg.outputs[k].segment | 0) === i && cfg.outputs[k].assigned)
+      .sort((a, b) => (isLive(b) ? 1 : 0) - (isLive(a) ? 1 : 0))[0];
+    if (owner !== undefined) {
+      const prefix = String(owner).startsWith('dl:') ? 's:'
+        : cfg.virtualOutputs.some((v) => String(v.id) === String(owner)) ? 'v:' : 'd:';
+      sel.value = prefix + owner;
+      if (sel.selectedIndex === -1) sel.value = ''; // stale id (display unplugged)
+    }
+
+    sel.addEventListener('change', () => assignSegmentOutput(sel.value, i, sg));
+    lab.appendChild(sel);
+    box.appendChild(lab);
+  });
+}
+
+// Kept as the name the rest of the file calls after displays/outputs change.
+function rebuildWallOutputSelect() { renderSegmentOutputs(); }
+
+// Assigning an output to a segment: same gesture whatever the output type.
+// The output is bound to this wall AND this segment, then started, so the
+// operator never has to open the Outputs panel to map a feed.
+function assignSegmentOutput(val, segment, seg) {
+  if (!val) return;
+  const w = curWall();
+
+  if (val === 'new') {
+    // a window sized to the SEGMENT, since that is the feed being simulated
+    previewWallInWindow(w, segment, seg);
+    renderDisplays();
+    syncSplitUI();
+    return;
+  }
+
+  const kind = val.slice(0, 1);
+  const idRaw = val.slice(2);
+  const id = kind === 'd' ? Number(idRaw) : idRaw;
+
+  if (kind === 's') {
+    const dev = (deckLinkInfo.devices || []).find((x) => dlOutputId(x) === id);
+    if (!dev) return;
+    const oc = dlCfgFor(dev);           // seeds dlMode/dlRange and 1:1 defaults
+    oc.wallId = w.id;
+    oc.assigned = true;
+    oc.segment = segment;
+    push();
+    renderDisplays();
+    renderDeckLink();
+    syncSplitUI();
+    if (!deckLinkActive.has(id)) startDeckLinkOutputFor(dev, oc);
+    return;
+  }
+
+  const oc = outCfgFor(id);
+  oc.wallId = w.id;
+  oc.assigned = true;
+  oc.segment = segment;
+  push();
+  renderDisplays();
+  syncSplitUI();
+  if (!activeSet.has(String(id))) {
+    if (kind === 'd') {
+      window.ledwall.startOutput(id);
+    } else {
+      const v = cfg.virtualOutputs.find((x) => String(x.id) === String(id));
+      if (v) window.ledwall.startOutput(v.id, { width: v.width, height: v.height, label: oc.label });
+    }
   }
 }
 
-function wireWallOutputSelect() {
-  $('#wallOutput').addEventListener('change', () => {
-    const val = $('#wallOutput').value;
-    if (!val) return;
-    const w = curWall();
-    if (val === 'new') {
-      previewWallInWindow(w);
-      renderDisplays();
-      return;
-    }
-    const kind = val.slice(0, 1);
-    const idRaw = val.slice(2);
-    const id = kind === 'd' ? Number(idRaw) : idRaw;
-
-    if (kind === 's') {
-      const dev = (deckLinkInfo.devices || []).find((x) => dlOutputId(x) === id);
-      if (!dev) return;
-      const oc = dlCfgFor(dev);           // seeds dlMode/dlRange and 1:1 defaults
-      oc.wallId = w.id;
-      oc.assigned = true;
-      oc.segment = nextFreeSegment(w.id, id);
-      push();
-      renderDisplays();
-      renderDeckLink();
-      if (!deckLinkActive.has(id)) startDeckLinkOutputFor(dev, oc);
-      return;
-    }
-
-    const oc = outCfgFor(id);
-    oc.wallId = w.id;
-    oc.assigned = true;
-    oc.segment = nextFreeSegment(w.id, id);
-    push();
-    renderDisplays();
-    if (!activeSet.has(String(id))) {
-      if (kind === 'd') {
-        window.ledwall.startOutput(id);
-      } else {
-        const v = cfg.virtualOutputs.find((x) => String(x.id) === String(id));
-        if (v) window.ledwall.startOutput(v.id, { width: v.width, height: v.height, label: oc.label });
-      }
-    }
-  });
-}
+function wireWallOutputSelect() { /* dropdowns wire themselves as they are built */ }
 
 // ---------- pattern buttons & params ----------
 

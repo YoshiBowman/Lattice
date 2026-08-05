@@ -31,9 +31,7 @@
       <section class="card">
         <h2>Wall Setup</h2>
         <label>Wall name<input type="text" id="wallName" spellcheck="false" placeholder="e.g. US Center Portrait"></label>
-        <label>Send to output
-          <select id="wallOutput"></select>
-        </label>
+        <div id="segmentOutputs"></div>
         <label>Panel layout
           <select id="wallMode">
             <option value="uniform">Uniform panels</option>
@@ -109,6 +107,10 @@
             <label>Outputs across<input type="number" id="splitCols" min="1" max="16" value="1"></label>
             <label>Outputs down<input type="number" id="splitRows" min="1" max="16" value="1"></label>
           </div>
+          <label id="splitColPanelsRow" style="display:none">Panels across, per segment (left→right)
+            <input type="text" id="splitColPanels" placeholder="9, 9" spellcheck="false"></label>
+          <label id="splitRowPanelsRow" style="display:none">Panels down, per segment (top→bottom)
+            <input type="text" id="splitRowPanels" placeholder="4, 7" spellcheck="false"></label>
           <label id="splitOverlapRow" style="display:none">Overlap between feeds (px)
             <input type="number" id="splitOverlap" min="0" max="4096" value="0"></label>
           <div id="splitSummary" class="hint"></div>
