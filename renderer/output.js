@@ -27,18 +27,35 @@ function myOutputCfg() {
   };
 }
 
-// Where this output crops into the wall. When the wall is split across several
-// outputs the segment decides it, so the operator never computes offsets by
-// hand; an unsplit wall keeps using the manual Crop X/Y.
-function myCrop() {
+// The rectangle of the wall this output shows. A segment defines it outright;
+// an unsplit wall uses the manual Crop X/Y in 1:1 and the whole wall otherwise.
+// EVERY scale mode honours this — drawing the full wall in fit/fill/stretch
+// while a segment was assigned gave the right scale but the wrong framing.
+function mySource() {
   const oc = myOutputCfg();
   const w = myWall();
   if (window.LED_WALL_IS_SPLIT(w)) {
-    const segs = window.LED_WALL_SEGMENTS(w);
-    const seg = segs[oc.segment | 0];
-    if (seg) return { x: seg.x, y: seg.y };
+    const seg = window.LED_WALL_SEGMENTS(w)[oc.segment | 0];
+    if (seg) {
+      return {
+        x: Math.max(0, seg.x),
+        y: Math.max(0, seg.y),
+        w: Math.min(seg.w, wall.width - Math.max(0, seg.x)),
+        h: Math.min(seg.h, wall.height - Math.max(0, seg.y)),
+      };
+    }
   }
-  return { x: oc.offsetX, y: oc.offsetY };
+  if (oc.mode === '1to1') {
+    const x = Math.max(0, Math.min(oc.offsetX, wall.width - 1));
+    const y = Math.max(0, Math.min(oc.offsetY, wall.height - 1));
+    return { x, y, w: wall.width - x, h: wall.height - y };
+  }
+  return { x: 0, y: 0, w: wall.width, h: wall.height };
+}
+
+function myCrop() {
+  const s = mySource();
+  return { x: s.x, y: s.y };
 }
 
 // The wall this output is assigned to (falls back to the first wall)
@@ -109,19 +126,18 @@ function blit() {
 }
 
 function blitTo(vctx, W, H) {
-  const w = wall.width, h = wall.height;
   vctx.fillStyle = '#000000';
   vctx.fillRect(0, 0, W, H);
   // posX/posY shift where the image lands in the output frame — LED processors
   // often capture a region that doesn't start at the frame's top-left corner
   const { mode, posX, posY } = myOutputCfg();
+  const src = mySource();
+  if (src.w <= 0 || src.h <= 0) return;
+
   if (mode === '1to1') {
     // true pixel mapping — always crisp
-    const crop = myCrop();
     vctx.imageSmoothingEnabled = false;
-    const sx = Math.max(0, Math.min(crop.x, w - 1));
-    const sy = Math.max(0, Math.min(crop.y, h - 1));
-    vctx.drawImage(wall, sx, sy, w - sx, h - sy, posX, posY, w - sx, h - sy);
+    vctx.drawImage(wall, src.x, src.y, src.w, src.h, posX, posY, src.w, src.h);
     return;
   }
   // Scaled modes: nearest-neighbor at non-integer ratios renders 1px lines
@@ -129,17 +145,17 @@ function blitTo(vctx, W, H) {
   // on a sampling boundary. Smooth-scale unless the ratio is a clean integer.
   let sX, sY, dx, dy, dw, dh;
   if (mode === 'stretch') {
-    sX = W / w; sY = H / h; dx = 0; dy = 0; dw = W; dh = H;
+    sX = W / src.w; sY = H / src.h; dx = 0; dy = 0; dw = W; dh = H;
   } else {
-    const s = mode === 'fill' ? Math.max(W / w, H / h) : Math.min(W / w, H / h);
+    const s = mode === 'fill' ? Math.max(W / src.w, H / src.h) : Math.min(W / src.w, H / src.h);
     sX = s; sY = s;
-    dw = w * s; dh = h * s;
+    dw = src.w * s; dh = src.h * s;
     dx = (W - dw) / 2; dy = (H - dh) / 2;
   }
   const crisp = isIntegerScale(sX) && isIntegerScale(sY);
   vctx.imageSmoothingEnabled = !crisp;
   vctx.imageSmoothingQuality = 'high';
-  vctx.drawImage(wall, dx + posX, dy + posY, dw, dh);
+  vctx.drawImage(wall, src.x, src.y, src.w, src.h, dx + posX, dy + posY, dw, dh);
 }
 
 const renderWallFrame = window.LED_CREATE_FRAME_RENDERER();

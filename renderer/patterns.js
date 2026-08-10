@@ -459,7 +459,11 @@
         ctx.moveTo(cx, 0); ctx.lineTo(cx, h);
         ctx.stroke();
         // rotating beam with fading trail (trail sits just behind the beam)
-        const ang = (t / 4000) * speed * Math.PI * 2;
+        // reduce to one revolution BEFORE the trig: the shared clock makes t
+        // ~5e10 ms, and an unreduced angle of ~1e8 radians loses several
+        // degrees of precision, so the beam and the conic gradient disagree
+        const rev = (t / 4000) * speed;
+        const ang = (rev - Math.floor(rev)) * Math.PI * 2;
         const grad = ctx.createConicGradient(ang, cx, cy);
         grad.addColorStop(0, 'rgba(0,0,0,0)');
         grad.addColorStop(0.72, 'rgba(0,0,0,0)');
@@ -586,7 +590,9 @@
         const o = cfg.overlay;
         const cx = w / 2, cy = h / 2;
         const R = Math.hypot(w, h) / 2;
-        const ang = (t / 4000) * (o.speed || 1) * Math.PI * 2;
+        // reduced to one revolution before the trig — see the pattern version
+        const rev = (t / 4000) * (o.speed || 1);
+        const ang = (rev - Math.floor(rev)) * Math.PI * 2;
         const grad = ctx.createConicGradient(ang, cx, cy);
         grad.addColorStop(0, 'rgba(0,0,0,0)');
         grad.addColorStop(0.72, 'rgba(0,0,0,0)');

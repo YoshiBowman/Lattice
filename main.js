@@ -90,7 +90,7 @@ function createOutput(display) {
     frame: false,
     show: false,
     backgroundColor: '#000000',
-    webPreferences: { preload: PRELOAD, contextIsolation: true, nodeIntegration: false },
+    webPreferences: { preload: PRELOAD, contextIsolation: true, nodeIntegration: false, backgroundThrottling: false },
   });
   const wcId = win.webContents.id;
   outputWins.set(display.id, win);
@@ -123,7 +123,7 @@ function createVirtualOutput(spec) {
     height: Math.max(180, Math.round(spec.height * scale)),
     title: `Lattice — ${spec.label || spec.id} (${spec.width}×${spec.height})`,
     backgroundColor: '#000000',
-    webPreferences: { preload: PRELOAD, contextIsolation: true, nodeIntegration: false },
+    webPreferences: { preload: PRELOAD, contextIsolation: true, nodeIntegration: false, backgroundThrottling: false },
   });
   // no aspect lock: resizing the window freely is how fit/fill/stretch become
   // visible on a virtual output (locked aspect made all three identical)
