@@ -67,8 +67,10 @@ git tag v<version> && git push origin main --tags
 - **Overlay pulses** — Resolume-style: a Radar Sweep, Ring Pulse, or Wave Sweep animates
   **over** the active test pattern (adjustable color, opacity, speed, direction), so you
   can watch a pulse travel across panel seams while the mapping pattern stays up.
-- **Patterns** — Solid Color, Color Bars, Grid, Checkerboard, Panel Map (A1…Z9 coordinates
-  and per-panel pixel size on seam borders), **Panel Chase** (lights each panel in order
+- **Patterns** — Solid Color, Color Bars, Grid, Checkerboard, Panel Map (a two-colour checkerboard of
+  panels — pick both colours or use a preset pair — with A1…Z9 coordinates and
+  per-panel pixel size, the labels auto-contrasting against whichever colour the
+  panel carries), **Panel Chase** (lights each panel in order
   with its coordinate — mapping verification), **Radar Sweep**, **Ring Pulse**, **Wave
   Sweep** (horizontal/vertical/diagonal pulse with trail), Gradient (gray/R/G/B/hue),
   Gray Steps (banding), Geometry (circles/crosshair/diagonals), 1px Lines (moiré/pixel

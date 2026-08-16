@@ -40,6 +40,14 @@
     return `rgba(${(n >> 16) & 255},${(n >> 8) & 255},${n & 255},${a})`;
   }
 
+  // Black or white, whichever stays legible on the given fill — so panel
+  // coordinates read whatever pair of colours the operator picks.
+  function readableOn(hex) {
+    const n = parseInt(String(hex || '#000000').slice(1), 16);
+    const lum = 0.299 * ((n >> 16) & 255) + 0.587 * ((n >> 8) & 255) + 0.114 * (n & 255);
+    return lum > 140 ? '#000000' : '#ffffff';
+  }
+
   // Spreadsheet-style column letters: 0->A, 25->Z, 26->AA ...
   function colLetter(i) {
     let s = '';
@@ -220,16 +228,19 @@
 
     panelmap: {
       name: 'Panel Map',
-      params: ['fg', 'bg'],
+      params: ['panelA', 'panelB', 'fg'],
       draw(ctx, cfg) {
         const { width: w, height: h } = cfg.wall;
         const g = wallGrid(cfg.wall);
-        fillBG(ctx, cfg);
-        // subtle alternate-panel tint so seams are obvious even without borders
-        ctx.fillStyle = 'rgba(255,255,255,0.07)';
+        // Panels alternate between two chosen colours, so every seam is visible
+        // as a colour change rather than relying on the 1px border alone.
+        const colA = cfg.pattern.panelA || '#101010';
+        const colB = cfg.pattern.panelB || '#303030';
+        const textOn = [readableOn(colA), readableOn(colB)];
         for (let r = 0; r < g.rows; r++) {
           for (let c = 0; c < g.cols; c++) {
-            if ((r + c) & 1) ctx.fillRect(g.xs[c], g.ys[r], g.colWidths[c], g.rowHeights[r]);
+            ctx.fillStyle = ((r + c) & 1) ? colB : colA;
+            ctx.fillRect(g.xs[c], g.ys[r], g.colWidths[c], g.rowHeights[r]);
           }
         }
         ctx.fillStyle = cfg.pattern.fg;
@@ -243,14 +254,20 @@
             const cx = g.xs[c] + pw / 2, cy = g.ys[r] + ph / 2;
             if (g.xs[c] >= w || g.ys[r] >= h) continue;
             const big = Math.max(8, Math.floor(Math.min(pw, ph) * 0.34));
-            ctx.fillStyle = cfg.pattern.fg;
+            // legible on whichever of the two colours this panel carries
+            ctx.fillStyle = textOn[(r + c) & 1];
             ctx.font = `bold ${big}px Menlo, monospace`;
             ctx.fillText(colLetter(c) + (r + 1), cx, cy + big * 0.35);
             if (ph >= 48) {
-              const ls = cfg.wall.pxLabelScale || 1; // preview renders scaled — show true px
+              // report the wall's real panel size: the preview draws a scaled
+              // copy, so scaling its rounded widths back up is off by a pixel
+              const ls = cfg.wall.pxLabelScale || 1;
+              const oc = cfg.wall.origColWidths, or = cfg.wall.origRowHeights;
+              const tw = oc && oc[c] != null ? oc[c] : Math.round(pw * ls);
+              const th = or && or[r] != null ? or[r] : Math.round(ph * ls);
               const small = Math.max(6, Math.floor(big * 0.4));
               ctx.font = `${small}px Menlo, monospace`;
-              ctx.fillText(`${Math.round(pw * ls)}×${Math.round(ph * ls)}`, cx, cy + big * 0.35 + small * 1.4);
+              ctx.fillText(`${tw}×${th}`, cx, cy + big * 0.35 + small * 1.4);
             }
           }
         }

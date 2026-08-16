@@ -46,7 +46,10 @@ const DEFAULTS = {
   walls: [freshWall('w1', 'Wall 1')],
   selectedWall: 'w1',
   cablingLayer: 'signal',
-  pattern: { type: 'grid', fg: '#ffffff', bg: '#000000', size: 16, speed: 2, gradMode: 'gray-h', dir: 'h' },
+  pattern: {
+    type: 'grid', fg: '#ffffff', bg: '#000000', size: 16, speed: 2, gradMode: 'gray-h', dir: 'h',
+    panelA: '#101010', panelB: '#303030', // Panel Map's two alternating colours
+  },
   overlay: { type: 'none', color: '#3fb950', opacity: 70, speed: 1, dir: 'h' },
   readout: { label: true, dims: false, scrim: true, font: 'mono', image: null }, // center label / wall name + dims + logo
   outputs: {}, // displayId | virtual id -> { mode, offsetX, offsetY, posX, posY, label, wallId }
@@ -657,6 +660,10 @@ function scaledCfgFor(w, s) {
       width: Math.max(1, Math.round(w.width * s)),
       height: Math.max(1, Math.round(w.height * s)),
       pxLabelScale: 1 / s, // panelmap/readout show true px, not scaled
+      // exact panel sizes: scaling rounded preview dimensions back up reports
+      // 171 or 174 for a wall whose panels are all really 172
+      origColWidths: g.colWidths.slice(),
+      origRowHeights: g.rowHeights.slice(),
       origMode: w.mode,
       origDefineBy: w.defineBy,
     },
@@ -1812,6 +1819,8 @@ function wireCabling() {
 function syncContentUI() {
   $('#fg').value = cfg.pattern.fg;
   $('#bg').value = cfg.pattern.bg;
+  $('#panelA').value = cfg.pattern.panelA;
+  $('#panelB').value = cfg.pattern.panelB;
   $('#size').value = cfg.pattern.size;
   $('#sizeVal').textContent = `${cfg.pattern.size}px`;
   $('#speed').value = cfg.pattern.speed;
@@ -2031,6 +2040,7 @@ function wireInputs() {
   });
 
   document.querySelectorAll('.preset-chips .chip').forEach((chip) => {
+    if (chip.dataset.pa) return; // panel-colour pairs, wired with the pattern params
     chip.addEventListener('click', () => {
       const w = curWall();
       if (chip.dataset.pitch) {
@@ -2069,11 +2079,23 @@ function wireInputs() {
     push();
   });
 
-  for (const id of ['fg', 'bg']) {
+  for (const id of ['fg', 'bg', 'panelA', 'panelB']) {
     const el = $('#' + id);
     el.value = cfg.pattern[id];
     el.addEventListener('input', () => { cfg.pattern[id] = el.value; push(); });
   }
+
+  // panel-colour pairs (these chips carry data-pa/data-pb, unlike the wall
+  // preset chips which the Wall Setup handler owns)
+  document.querySelectorAll('.chip[data-pa]').forEach((chip) => {
+    chip.addEventListener('click', () => {
+      cfg.pattern.panelA = chip.dataset.pa;
+      cfg.pattern.panelB = chip.dataset.pb;
+      $('#panelA').value = cfg.pattern.panelA;
+      $('#panelB').value = cfg.pattern.panelB;
+      push();
+    });
+  });
 
   const size = $('#size');
   size.value = cfg.pattern.size;
