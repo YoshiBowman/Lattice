@@ -462,6 +462,101 @@ ipcMain.handle('load-logo', () => {
   }
 });
 
+// ---------- loop export ----------
+// Frames are written as PNGs, which every media server ingests directly. If
+// ffmpeg is on the machine we additionally encode H.264 — this Electron build
+// has no H.264 encoder of its own (MediaRecorder offers no MP4 and WebCodecs
+// reports avc1 unsupported), so MP4 genuinely requires an external encoder.
+
+function findFfmpeg() {
+  const candidates = ['/opt/homebrew/bin/ffmpeg', '/usr/local/bin/ffmpeg', '/usr/bin/ffmpeg'];
+  for (const p of candidates) {
+    try { fs.accessSync(p, fs.constants.X_OK); return p; } catch (_) { /* next */ }
+  }
+  try {
+    const out = spawnSync('which', ['ffmpeg'], { encoding: 'utf8' });
+    const p = (out.stdout || '').trim();
+    if (p && fs.existsSync(p)) return p;
+  } catch (_) { /* none */ }
+  return null;
+}
+
+ipcMain.handle('export-capabilities', () => ({ ffmpeg: !!findFfmpeg() }));
+
+ipcMain.handle('export-choose', async (e, suggested) => {
+  const res = await dialog.showSaveDialog(controlWin, {
+    title: 'Export Loop',
+    defaultPath: suggested || 'lattice-loop',
+    buttonLabel: 'Export',
+  });
+  if (res.canceled || !res.filePath) return { ok: false, canceled: true };
+  return { ok: true, path: res.filePath };
+});
+
+// Frames land in their own directory: an image sequence needs one anyway, and
+// it keeps a failed ffmpeg run from scattering files beside the user's work.
+ipcMain.handle('export-begin', (e, basePath) => {
+  try {
+    const dir = basePath.replace(/\.(png|mp4|webm)$/i, '') + '-frames';
+    fs.rmSync(dir, { recursive: true, force: true });
+    fs.mkdirSync(dir, { recursive: true });
+    return { ok: true, dir };
+  } catch (err) {
+    return { ok: false, error: err.message };
+  }
+});
+
+ipcMain.handle('export-frame', (e, dir, index, dataUrl) => {
+  try {
+    const b64 = String(dataUrl).split(',')[1];
+    fs.writeFileSync(path.join(dir, `frame_${String(index).padStart(5, '0')}.png`), Buffer.from(b64, 'base64'));
+    return { ok: true };
+  } catch (err) {
+    return { ok: false, error: err.message };
+  }
+});
+
+ipcMain.handle('export-write-file', (e, filePath, dataUrl) => {
+  try {
+    const b64 = String(dataUrl).split(',')[1];
+    fs.writeFileSync(filePath, Buffer.from(b64, 'base64'));
+    return { ok: true, path: filePath };
+  } catch (err) {
+    return { ok: false, error: err.message };
+  }
+});
+
+ipcMain.handle('export-encode', (e, dir, outPath, fps) => new Promise((resolve) => {
+  const bin = findFfmpeg();
+  if (!bin) return resolve({ ok: false, error: 'ffmpeg not found' });
+  // -crf 16 keeps test patterns clean: 1px lines are exactly what compression
+  // destroys first, and a soft grid defeats the purpose of the clip.
+  const args = [
+    '-y', '-framerate', String(fps), '-i', path.join(dir, 'frame_%05d.png'),
+    '-c:v', 'libx264', '-preset', 'slow', '-crf', '16',
+    '-pix_fmt', 'yuv420p', '-movflags', '+faststart', outPath,
+  ];
+  const proc = spawn(bin, args, { stdio: ['ignore', 'ignore', 'pipe'] });
+  let err = '';
+  proc.stderr.on('data', (d) => { err += d.toString().slice(-2000); });
+  proc.on('close', (code) => {
+    if (code === 0) resolve({ ok: true, path: outPath });
+    else resolve({ ok: false, error: `ffmpeg exited ${code}: ${err.split('\n').slice(-4).join(' ')}` });
+  });
+  proc.on('error', (e2) => resolve({ ok: false, error: e2.message }));
+}));
+
+ipcMain.handle('export-cleanup', (e, dir, keep) => {
+  try {
+    if (!keep) fs.rmSync(dir, { recursive: true, force: true });
+    return { ok: true };
+  } catch (err) {
+    return { ok: false, error: err.message };
+  }
+});
+
+ipcMain.handle('export-reveal', (e, target) => { shell.showItemInFolder(target); });
+
 // ---------- show files (.lattice) ----------
 
 ipcMain.handle('save-show', async (e, json) => {

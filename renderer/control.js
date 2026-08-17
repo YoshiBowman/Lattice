@@ -1902,6 +1902,192 @@ function exportWallPNG() {
   a.click();
 }
 
+// ---------- loop export ----------
+//
+// A clip is only useful on a media server if it loops without a visible jump,
+// so the export covers a whole number of animation cycles: the last frame is
+// one frame-step before the first repeats.
+
+let exportCaps = { ffmpeg: false };
+let exporting = false;
+
+function loopPlan() {
+  const w = curWall();
+  resolveWall(w);
+  const cfgForLoop = { wall: w, pattern: cfg.pattern, overlay: cfg.overlay };
+  const period = window.LED_LOOP_PERIOD(cfgForLoop);
+  const fps = parseFloat($('#loopFps').value) || 60;
+  const cycles = Math.max(1, $('#loopCycles').value | 0);
+  const ms = period.ms * cycles;
+  return { wall: w, period, fps, cycles, ms, frames: Math.max(1, Math.round((ms / 1000) * fps)) };
+}
+
+function updateLoopInfo() {
+  const p = loopPlan();
+  const info = $('#loopInfo');
+  const warn = $('#loopWarn');
+  const fmt = $('#loopFormat').value;
+
+  if (!p.period.animated) {
+    info.textContent = `${p.wall.name} — ${p.wall.width} × ${p.wall.height} — this pattern is static`;
+    warn.textContent = 'Nothing is moving, so a loop would be one repeated frame. Use Export PNG instead.';
+    warn.style.color = 'var(--danger)';
+    $('#loopCyclesRow').style.display = 'none';
+  } else if (!p.period.exact) {
+    info.textContent = `${p.wall.name} — ${p.wall.width} × ${p.wall.height} @ ${p.fps} fps`;
+    warn.textContent = 'This pattern has no short repeat (Motion Test and Pixel Walk never return to '
+      + 'their exact start), so the clip will jump when it loops. Radar, Ring Pulse, Wave Sweep, '
+      + 'Colour Cycle and Panel Chase all loop cleanly.';
+    warn.style.color = 'var(--danger)';
+    $('#loopCyclesRow').style.display = 'none';
+  } else {
+    const secs = p.ms / 1000;
+    info.textContent = `${p.wall.name} — ${p.wall.width} × ${p.wall.height} @ ${p.fps} fps — `
+      + `${secs.toFixed(2)} s, ${p.frames} frames, seamless`;
+    warn.textContent = '';
+    $('#loopCyclesRow').style.display = '';
+  }
+
+  const note = $('#loopFormatNote');
+  if (fmt === 'mp4' && !exportCaps.ffmpeg) {
+    note.textContent = 'MP4 needs ffmpeg, which was not found on this machine — install it '
+      + '(brew install ffmpeg) or export a PNG sequence, which media servers ingest directly.';
+    note.style.color = 'var(--danger)';
+  } else if (fmt === 'png') {
+    note.textContent = 'A numbered PNG sequence in its own folder — lossless, and what Hippotizer, '
+      + 'Resolume and disguise take natively.';
+    note.style.color = '';
+  } else if (fmt === 'webm') {
+    note.textContent = 'VP9 WebM. Fine for VLC or a quick check; most media servers will not take it.';
+    note.style.color = '';
+  } else {
+    note.textContent = 'H.264 at CRF 16 — high enough that single-pixel grid lines survive encoding.';
+    note.style.color = '';
+  }
+  $('#loopGo').disabled = exporting || !p.period.animated || (fmt === 'mp4' && !exportCaps.ffmpeg);
+}
+
+async function openExportModal() {
+  exportCaps = await window.ledwall.exportCapabilities();
+  const sel = $('#loopFormat');
+  sel.value = exportCaps.ffmpeg ? 'mp4' : 'png';
+  $('#loopProgress').textContent = '';
+  $('#exportModal').style.display = 'flex';
+  updateLoopInfo();
+}
+
+async function runLoopExport() {
+  if (exporting) return;
+  const p = loopPlan();
+  if (!p.period.animated) return;
+  const fmt = $('#loopFormat').value;
+  const safe = (p.wall.name || 'wall').replace(/[^\w-]+/g, '_');
+  const suggested = `lattice-${safe}-${cfg.pattern.type}${cfg.overlay.type !== 'none' ? '-' + cfg.overlay.type : ''}`;
+
+  const chosen = await window.ledwall.exportChoose(suggested);
+  if (!chosen.ok) return;
+
+  exporting = true;
+  $('#loopGo').disabled = true;
+  const progress = $('#loopProgress');
+  const frameMs = p.ms / p.frames;
+
+  // Render off the live canvases so the preview and any running outputs are
+  // untouched while this runs.
+  const c = document.createElement('canvas');
+  c.width = p.wall.width;
+  c.height = p.wall.height;
+  const ctx = c.getContext('2d');
+  const frameCfg = { wall: p.wall, pattern: cfg.pattern, overlay: cfg.overlay, readout: cfg.readout };
+
+  try {
+    if (fmt === 'webm') {
+      progress.textContent = 'Recording…';
+      const blobUrl = await recordWebM(c, ctx, frameCfg, p, frameMs);
+      const out = chosen.path.replace(/\.(webm|mp4|png)$/i, '') + '.webm';
+      const res = await window.ledwall.exportWriteFile(out, blobUrl);
+      progress.textContent = res.ok ? `Saved ${out.split('/').pop()}` : `Failed: ${res.error}`;
+      if (res.ok) window.ledwall.exportReveal(out);
+    } else {
+      const begun = await window.ledwall.exportBegin(chosen.path);
+      if (!begun.ok) throw new Error(begun.error);
+      for (let i = 0; i < p.frames; i++) {
+        // frame i represents the instant i*frameMs into the loop; frame count
+        // is chosen so frame `frames` would be exactly the start again
+        window.LED_RENDER_FRAME(ctx, frameCfg, i * frameMs);
+        const url = c.toDataURL('image/png');
+        const w = await window.ledwall.exportFrame(begun.dir, i, url);
+        if (!w.ok) throw new Error(w.error);
+        if (i % 5 === 0 || i === p.frames - 1) {
+          progress.textContent = `Rendering ${i + 1} / ${p.frames} frames…`;
+          await new Promise((r) => setTimeout(r, 0)); // let the UI repaint
+        }
+      }
+      if (fmt === 'mp4') {
+        progress.textContent = 'Encoding H.264…';
+        const out = chosen.path.replace(/\.(webm|mp4|png)$/i, '') + '.mp4';
+        const enc = await window.ledwall.exportEncode(begun.dir, out, p.fps);
+        if (!enc.ok) throw new Error(enc.error);
+        await window.ledwall.exportCleanup(begun.dir, false);
+        progress.textContent = `Saved ${out.split('/').pop()} — ${p.frames} frames, ${(p.ms / 1000).toFixed(2)} s`;
+        window.ledwall.exportReveal(out);
+      } else {
+        progress.textContent = `Saved ${p.frames} PNGs to ${begun.dir.split('/').pop()}`;
+        window.ledwall.exportReveal(begun.dir);
+      }
+    }
+  } catch (err) {
+    progress.textContent = `Export failed: ${err.message}`;
+  } finally {
+    exporting = false;
+    updateLoopInfo();
+  }
+}
+
+// MediaRecorder path. captureStream(0) means frames are only emitted when we
+// ask, so the clip contains exactly the frames we rendered.
+function recordWebM(canvas, ctx, frameCfg, plan, frameMs) {
+  return new Promise((resolve, reject) => {
+    const type = MediaRecorder.isTypeSupported('video/webm;codecs=vp9')
+      ? 'video/webm;codecs=vp9' : 'video/webm';
+    const stream = canvas.captureStream(0);
+    const track = stream.getVideoTracks()[0];
+    const chunks = [];
+    const rec = new MediaRecorder(stream, { mimeType: type, videoBitsPerSecond: 40000000 });
+    rec.ondataavailable = (e) => { if (e.data && e.data.size) chunks.push(e.data); };
+    rec.onerror = (e) => reject(new Error(e.error ? e.error.message : 'recorder failed'));
+    rec.onstop = () => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(reader.result);
+      reader.onerror = () => reject(new Error('could not read the recording'));
+      reader.readAsDataURL(new Blob(chunks, { type }));
+    };
+    rec.start();
+    let i = 0;
+    const step = () => {
+      if (i >= plan.frames) { track.stop(); rec.stop(); return; }
+      window.LED_RENDER_FRAME(ctx, frameCfg, i * frameMs);
+      track.requestFrame();
+      i++;
+      if (i % 5 === 0) $('#loopProgress').textContent = `Recording ${i} / ${plan.frames}…`;
+      setTimeout(step, 1000 / plan.fps);
+    };
+    step();
+  });
+}
+
+function wireExport() {
+  $('#exportLoopBtn').addEventListener('click', openExportModal);
+  $('#loopCancel').addEventListener('click', () => { $('#exportModal').style.display = 'none'; });
+  $('#loopGo').addEventListener('click', runLoopExport);
+  ['#loopFormat', '#loopFps', '#loopCycles'].forEach((s) => {
+    $(s).addEventListener('change', updateLoopInfo);
+  });
+  $('#exportModal').addEventListener('click', (e) => {
+    if (e.target === $('#exportModal') && !exporting) $('#exportModal').style.display = 'none';
+  });
+}
+
 // ---------- auto-update toast ----------
 
 function updateBar() {
@@ -2196,6 +2382,7 @@ function wireInputs() {
   $('#exportBtn').addEventListener('click', exportWallPNG);
   $('#addVirtualBtn').addEventListener('click', addVirtualOutput);
   $('#addWallBtn').addEventListener('click', addWall);
+  wireExport();
   $('#saveShowBtn').addEventListener('click', saveShowFile);
   $('#loadShowBtn').addEventListener('click', loadShowFile);
   wireWallOutputSelect();

@@ -13,6 +13,7 @@
       <button id="loadShowBtn" class="btn">Load Show</button>
       <span class="header-sep"></span>
       <button id="exportBtn" class="btn">Export PNG</button>
+      <button id="exportLoopBtn" class="btn">Export Loop…</button>
       <button id="identifyBtn" class="btn">Identify Displays</button>
       <button id="stopAllBtn" class="btn danger">Stop All Outputs</button>
     </div>
@@ -335,6 +336,41 @@
       </section>
     </section>
   </main>
+
+  <div id="exportModal" class="modal" style="display:none">
+    <div class="modal-card">
+      <h2>Export Loop</h2>
+      <div id="loopInfo" class="summary"></div>
+      <div id="loopWarn" class="hint"></div>
+      <div class="row2">
+        <label>Format
+          <select id="loopFormat">
+            <option value="png">PNG image sequence</option>
+            <option value="mp4">MP4 (H.264)</option>
+            <option value="webm">WebM (VP9)</option>
+          </select>
+        </label>
+        <label>Frame rate
+          <select id="loopFps">
+            <option value="60">60 fps</option>
+            <option value="59.94">59.94 fps</option>
+            <option value="50">50 fps</option>
+            <option value="30">30 fps</option>
+            <option value="25">25 fps</option>
+            <option value="24">24 fps</option>
+          </select>
+        </label>
+      </div>
+      <label id="loopCyclesRow">Cycles to record
+        <input type="number" id="loopCycles" min="1" max="20" value="1"></label>
+      <div id="loopFormatNote" class="hint"></div>
+      <div id="loopProgress" class="hint"></div>
+      <div class="run-add">
+        <button id="loopGo" class="btn primary">Export</button>
+        <button id="loopCancel" class="btn">Close</button>
+      </div>
+    </div>
+  </div>
 
   <script src="patterns.js"></script>
   <script src="processors.js"></script>

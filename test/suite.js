@@ -265,6 +265,66 @@ function check(name, ok, detail) {
   check('wave sweep is scale-independent', Math.abs(wave.big - wave.small) < 0.02,
     `1920=${wave.big.toFixed(3)} 960=${wave.small.toFixed(3)}`);
 
+  // ───────────────────────────────────────────── loop export
+  section('loop export');
+  const periods = JSON.parse(await evalIn(page, `(function(){
+    var w=curWall();
+    function per(pat,spd,ov,ovs){
+      return LED_LOOP_PERIOD({wall:w, pattern:{...cfg.pattern,type:pat,speed:spd},
+        overlay: ov?{type:ov,speed:ovs||1}:{type:'none'}});
+    }
+    return JSON.stringify({
+      radar: per('solid',1,'radar',1),
+      radar2: per('solid',1,'radar',2),
+      combined: per('colorcycle',1,'radar',1),
+      motion: per('motion',1),
+      static: per('grid',1)
+    });
+  })()`));
+  check('radar loops in 4s, halving at speed 2',
+    periods.radar.ms === 4000 && periods.radar.exact && periods.radar2.ms === 2000, JSON.stringify(periods.radar));
+  check('layers combine to a common multiple', periods.combined.ms === 8000 && periods.combined.exact, JSON.stringify(periods.combined));
+  check('unloopable and static patterns are reported honestly',
+    periods.motion.exact === false && periods.static.animated === false,
+    `motion=${JSON.stringify(periods.motion)} static=${JSON.stringify(periods.static)}`);
+
+  // the property the whole feature rests on: one frame past the end is the start
+  const seam = JSON.parse(await evalIn(page, `(function(){
+    var w=curWall();
+    var pat={...cfg.pattern,type:'solid',bg:'#000000'};
+    var ov={type:'radar',speed:1,color:'#00ff00',opacity:100,dir:'h'};
+    var per=LED_LOOP_PERIOD({wall:w,pattern:pat,overlay:ov});
+    var frames=Math.round(per.ms/1000*60), step=per.ms/frames;
+    function sig(t){
+      var c=document.createElement('canvas'); c.width=w.width; c.height=w.height;
+      var ctx=c.getContext('2d');
+      LED_RENDER_FRAME(ctx,{wall:w,pattern:pat,overlay:ov,readout:{label:false,dims:false}},t);
+      var d=ctx.getImageData(0,0,c.width,c.height).data,s=0;
+      for(var i=0;i<d.length;i+=997) s+=d[i+1];
+      return s;
+    }
+    return JSON.stringify({ frames:frames, first:sig(0), wrap:sig(frames*step), last:sig((frames-1)*step) });
+  })()`));
+  check('the frame after the last is exactly the first', seam.first === seam.wrap, `first=${seam.first} wrap=${seam.wrap}`);
+  check('the last frame is not a duplicate of the first', seam.last !== seam.first, `last=${seam.last}`);
+
+  const caps = JSON.parse(await evalIn(page, `window.ledwall.exportCapabilities().then(c=>JSON.stringify(c))`));
+  check('encoder capability is probed', typeof caps.ffmpeg === 'boolean', `ffmpeg=${caps.ffmpeg}`);
+
+  // frames really reach disk
+  const wrote = JSON.parse(await evalIn(page, `(async function(){
+    var w=curWall();
+    var b=await window.ledwall.exportBegin('/private/tmp/lattice-suite-export/x.mp4');
+    if(!b.ok) return JSON.stringify({ok:false,error:b.error});
+    var c=document.createElement('canvas'); c.width=w.width; c.height=w.height;
+    var ctx=c.getContext('2d');
+    LED_RENDER_FRAME(ctx,{wall:w,pattern:cfg.pattern,overlay:{type:'none'},readout:{label:false,dims:false}},0);
+    var r=await window.ledwall.exportFrame(b.dir,0,c.toDataURL('image/png'));
+    var cleanup=await window.ledwall.exportCleanup(b.dir,false);
+    return JSON.stringify({ok:r.ok && cleanup.ok, dir:b.dir});
+  })()`));
+  check('frames write to disk and clean up', wrote.ok, wrote.dir || wrote.error);
+
   // ───────────────────────────────────────────── persistence
   section('show files');
   const rt = JSON.parse(await evalIn(page, `(function(){

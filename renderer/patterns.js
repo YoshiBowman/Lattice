@@ -994,6 +994,63 @@
     ctx.restore();
   }
 
+  // ---------------------------------------------------------------------------
+  // Loop periods. A clip only loops seamlessly if it covers a whole number of
+  // animation cycles, so each animated layer reports how long one cycle takes.
+  // `exact: false` means the layer has no short repeat — the caller should say
+  // so rather than pretend the export loops.
+  const PERIODS = {
+    radar: (speed) => ({ ms: 4000 / speed, exact: true }),
+    ringpulse: (speed) => ({ ms: 2000 / speed, exact: true }),
+    wavesweep: (speed, wall, dir) => {
+      const span = dir === 'v' ? wall.height : dir === 'd'
+        ? Math.hypot(wall.width, wall.height) : wall.width;
+      const trail = Math.max(40, span * 0.25);
+      return { ms: ((span + trail) / (rate(wall, 250) * speed)) * 1000, exact: true };
+    },
+  };
+
+  function layerPeriod(kind, type, speed, wall, dir) {
+    if (PERIODS[type]) return PERIODS[type](speed, wall, dir);
+    if (kind === 'pattern') {
+      if (type === 'colorcycle') return { ms: (CYCLE_COLORS.length * 1000) / speed, exact: true };
+      if (type === 'panelchase') {
+        const g = wallGrid(wall);
+        return { ms: (g.cols * g.rows * 1000) / speed, exact: true };
+      }
+      // Pixel Walk repeats only after lcm(width,height) steps and Motion Test
+      // combines three incommensurable rates — neither has a usable short loop.
+      if (type === 'pixelwalk' || type === 'motion') return { ms: 0, exact: false };
+    }
+    return null; // static layer
+  }
+
+  const gcd = (a, b) => (b < 1e-6 ? a : gcd(b, a % b));
+
+  // Smallest span covering whole cycles of every animated layer.
+  function loopPeriod(cfg) {
+    const wall = cfg.wall;
+    const parts = [];
+    const p = layerPeriod('pattern', cfg.pattern.type, cfg.pattern.speed || 1, wall, cfg.pattern.dir);
+    if (p) parts.push(p);
+    if (cfg.overlay && cfg.overlay.type && cfg.overlay.type !== 'none') {
+      const o = layerPeriod('overlay', cfg.overlay.type, cfg.overlay.speed || 1, wall, cfg.overlay.dir);
+      if (o) parts.push(o);
+    }
+    if (!parts.length) return { ms: 0, exact: true, animated: false };
+    if (parts.some((x) => !x.exact)) return { ms: 0, exact: false, animated: true };
+
+    // combine by least common multiple, with a tolerance so floating periods
+    // (the wave sweep is rarely a round number) still line up
+    let ms = parts[0].ms;
+    for (let i = 1; i < parts.length; i++) {
+      const b = parts[i].ms;
+      ms = (ms * b) / gcd(Math.max(ms, b), Math.min(ms, b));
+      if (!isFinite(ms) || ms > 120000) return { ms: parts[0].ms, exact: false, animated: true };
+    }
+    return { ms, exact: true, animated: true };
+  }
+
   function drawDynamicLayers(ctx, cfg, t) {
     const ovCfg = cfg.overlay;
     const ov = ovCfg && OVERLAYS[ovCfg.type];
@@ -1075,6 +1132,7 @@
   window.LED_WALL_IS_SPLIT = wallIsSplit;
   window.LED_SPLIT_SPANS = splitSpans;
   window.LED_NOW = now;
+  window.LED_LOOP_PERIOD = loopPeriod;
   window.LED_DRAW_CABLING = drawCabling;
   window.LED_RUN_LOAD = runLoad;
   window.LED_RUN_COLORS = RUN_COLORS;

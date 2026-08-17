@@ -113,6 +113,16 @@ git tag v<version> && git push origin main --tags
   advance. Remove them with ✕ when done.
 - **Export PNG** — save the current wall frame (pattern + overlay) at native wall
   resolution, e.g. to load into a media server or send to the LED vendor.
+- **Export Loop** — render an animated pattern or overlay pulse as a **seamlessly looping
+  clip** for a media server, so the wall can be tested without Lattice running. Lattice
+  computes the exact loop length from the animation itself (a radar sweep at speed 1 is
+  4.00 s; a colour cycle over a radar sweep is 8.00 s) and renders precisely that many
+  frames, so the frame after the last *is* the first. Formats:
+  **PNG image sequence** — lossless and what Hippotizer, Resolume and disguise ingest
+  natively; **MP4 (H.264, CRF 16)** when ffmpeg is installed, high enough quality that
+  single-pixel grid lines survive; **WebM (VP9)** for VLC or a quick check.
+  Motion Test and Pixel Walk never return to their exact start, and the dialog says so
+  rather than exporting a clip that jumps.
 - **Live preview** — the control window previews exactly what outputs render (same code).
 - **Multiple outputs** — every display the OS sees gets a card: graphics card outputs
   (HDMI/DP/Thunderbolt), and playback/SDI cards whose drivers present them as displays.
