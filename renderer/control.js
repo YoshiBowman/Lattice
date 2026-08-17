@@ -1949,19 +1949,31 @@ function updateLoopInfo() {
   }
 
   const note = $('#loopFormatNote');
+  $('#ffmpegRow').style.display = (fmt === 'mp4' && !exportCaps.ffmpeg) ? '' : 'none';
   if (fmt === 'mp4' && !exportCaps.ffmpeg) {
-    note.textContent = 'MP4 needs ffmpeg, which was not found on this machine — install it '
-      + '(brew install ffmpeg) or export a PNG sequence, which media servers ingest directly.';
+    if (exportCaps.blocked && exportCaps.blocked.length) {
+      // found, but it refused to run — usually Gatekeeper quarantine on a
+      // web download, which looks identical to "missing" without this
+      note.textContent = `Found ffmpeg at ${exportCaps.blocked[0]} but it would not run. `
+        + 'If you downloaded it, macOS has probably quarantined it — in Terminal: '
+        + `xattr -d com.apple.quarantine "${exportCaps.blocked[0]}"  then Check again.`;
+    } else {
+      note.textContent = `MP4 needs ffmpeg and none was found (${exportCaps.searched || 0} locations checked, `
+        + 'including your login shell PATH). Install it with "brew install ffmpeg", or if it is '
+        + 'already on this machine use Locate ffmpeg… to point at it. A PNG sequence needs no encoder '
+        + 'and is what media servers prefer anyway.';
+    }
     note.style.color = 'var(--danger)';
+  } else if (fmt === 'mp4') {
+    note.textContent = `H.264 at CRF 16 — high enough that single-pixel grid lines survive encoding. `
+      + `Using ${exportCaps.ffmpegPath || 'ffmpeg'}.`;
+    note.style.color = '';
   } else if (fmt === 'png') {
     note.textContent = 'A numbered PNG sequence in its own folder — lossless, and what Hippotizer, '
       + 'Resolume and disguise take natively.';
     note.style.color = '';
   } else if (fmt === 'webm') {
     note.textContent = 'VP9 WebM. Fine for VLC or a quick check; most media servers will not take it.';
-    note.style.color = '';
-  } else {
-    note.textContent = 'H.264 at CRF 16 — high enough that single-pixel grid lines survive encoding.';
     note.style.color = '';
   }
   $('#loopGo').disabled = exporting || !p.period.animated || (fmt === 'mp4' && !exportCaps.ffmpeg);
@@ -2082,6 +2094,20 @@ function wireExport() {
   $('#loopGo').addEventListener('click', runLoopExport);
   ['#loopFormat', '#loopFps', '#loopCycles'].forEach((s) => {
     $(s).addEventListener('change', updateLoopInfo);
+  });
+  $('#recheckFfmpeg').addEventListener('click', async () => {
+    $('#loopProgress').textContent = 'Looking for ffmpeg…';
+    exportCaps = await window.ledwall.exportCapabilities();
+    $('#loopProgress').textContent = exportCaps.ffmpeg ? `Found ${exportCaps.ffmpegPath}` : 'Still not found.';
+    updateLoopInfo();
+  });
+  $('#locateFfmpeg').addEventListener('click', async () => {
+    const res = await window.ledwall.exportLocateFfmpeg();
+    if (res.canceled) return;
+    if (!res.ok) { $('#loopProgress').textContent = res.error; return; }
+    exportCaps = await window.ledwall.exportCapabilities();
+    $('#loopProgress').textContent = `Using ${res.path}`;
+    updateLoopInfo();
   });
   $('#exportModal').addEventListener('click', (e) => {
     if (e.target === $('#exportModal') && !exporting) $('#exportModal').style.display = 'none';

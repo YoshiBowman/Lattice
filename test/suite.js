@@ -63,6 +63,12 @@ function check(name, ok, detail) {
     return 1;
   })()`;
 
+  // Start from a known state. Without this, windows left open by an aborted
+  // run (or by hand) are counted by the live-output checks and report failures
+  // that have nothing to do with the code.
+  await evalIn(page, reset);
+  await sleep(700);
+
   // ───────────────────────────────────────────── shell
   section('control window');
   const shell = JSON.parse(await evalIn(page, `JSON.stringify({

@@ -14,6 +14,7 @@ contextBridge.exposeInMainWorld('ledwall', {
   loadLogo: () => ipcRenderer.invoke('load-logo'),
   exportCapabilities: () => ipcRenderer.invoke('export-capabilities'),
   exportChoose: (suggested) => ipcRenderer.invoke('export-choose', suggested),
+  exportLocateFfmpeg: () => ipcRenderer.invoke('export-locate-ffmpeg'),
   exportBegin: (basePath) => ipcRenderer.invoke('export-begin', basePath),
   exportFrame: (dir, index, dataUrl) => ipcRenderer.invoke('export-frame', dir, index, dataUrl),
   exportWriteFile: (filePath, dataUrl) => ipcRenderer.invoke('export-write-file', filePath, dataUrl),

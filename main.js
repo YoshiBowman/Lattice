@@ -468,20 +468,97 @@ ipcMain.handle('load-logo', () => {
 // has no H.264 encoder of its own (MediaRecorder offers no MP4 and WebCodecs
 // reports avc1 unsupported), so MP4 genuinely requires an external encoder.
 
-function findFfmpeg() {
-  const candidates = ['/opt/homebrew/bin/ffmpeg', '/usr/local/bin/ffmpeg', '/usr/bin/ffmpeg'];
-  for (const p of candidates) {
-    try { fs.accessSync(p, fs.constants.X_OK); return p; } catch (_) { /* next */ }
-  }
+// Finding ffmpeg is harder than it looks: a GUI app on macOS does NOT inherit
+// the PATH from your shell profile, so a perfectly good Homebrew install is
+// invisible to a plain `which`. Search real locations, then ask a login shell,
+// and let the user point at the binary directly as the last resort.
+const ffmpegPrefPath = () => path.join(app.getPath('userData'), 'ffmpeg-path.txt');
+
+function savedFfmpeg() {
   try {
-    const out = spawnSync('which', ['ffmpeg'], { encoding: 'utf8' });
-    const p = (out.stdout || '').trim();
-    if (p && fs.existsSync(p)) return p;
-  } catch (_) { /* none */ }
-  return null;
+    const p = fs.readFileSync(ffmpegPrefPath(), 'utf8').trim();
+    return p || null;
+  } catch (_) { return null; }
 }
 
-ipcMain.handle('export-capabilities', () => ({ ffmpeg: !!findFfmpeg() }));
+// Existing and executable is not enough — a binary downloaded from the web can
+// be quarantined or built for the wrong architecture, and only running it says
+// so. Cheap enough to check properly.
+function ffmpegWorks(p) {
+  if (!p) return false;
+  try {
+    const out = spawnSync(p, ['-version'], { encoding: 'utf8', timeout: 5000 });
+    return out.status === 0 && /ffmpeg version/i.test(out.stdout || '');
+  } catch (_) { return false; }
+}
+
+function findFfmpeg() {
+  const tried = [];
+  const saved = savedFfmpeg();
+  if (saved) { tried.push(saved); if (ffmpegWorks(saved)) return { path: saved, tried }; }
+
+  const candidates = [
+    '/opt/homebrew/bin/ffmpeg',      // Apple Silicon Homebrew
+    '/usr/local/bin/ffmpeg',         // Intel Homebrew, most manual installs
+    '/opt/local/bin/ffmpeg',         // MacPorts
+    '/usr/bin/ffmpeg',
+    '/snap/bin/ffmpeg',
+    path.join(os.homedir(), 'bin', 'ffmpeg'),
+    path.join(os.homedir(), '.local', 'bin', 'ffmpeg'),
+    path.join(os.homedir(), 'Downloads', 'ffmpeg'),
+    path.join(os.homedir(), 'Applications', 'ffmpeg'),
+    'C:\\ffmpeg\\bin\\ffmpeg.exe',
+    'C:\\Program Files\\ffmpeg\\bin\\ffmpeg.exe',
+  ];
+  for (const p of candidates) {
+    if (!fs.existsSync(p)) continue;
+    tried.push(p);
+    if (ffmpegWorks(p)) return { path: p, tried };
+  }
+
+  // a login shell sources the user's profile, so this sees the same PATH the
+  // terminal does — the case a bare `which` from a GUI app always misses
+  try {
+    const shell = process.platform === 'win32' ? null : (process.env.SHELL || '/bin/zsh');
+    if (shell) {
+      const out = spawnSync(shell, ['-lc', 'command -v ffmpeg'], { encoding: 'utf8', timeout: 8000 });
+      const p = (out.stdout || '').trim().split('\n')[0];
+      if (p && fs.existsSync(p)) { tried.push(p); if (ffmpegWorks(p)) return { path: p, tried }; }
+    } else {
+      const out = spawnSync('where', ['ffmpeg'], { encoding: 'utf8', timeout: 8000 });
+      const p = (out.stdout || '').trim().split(/\r?\n/)[0];
+      if (p && fs.existsSync(p)) { tried.push(p); if (ffmpegWorks(p)) return { path: p, tried }; }
+    }
+  } catch (_) { /* nothing on PATH */ }
+
+  return { path: null, tried };
+}
+
+ipcMain.handle('export-capabilities', () => {
+  const found = findFfmpeg();
+  // Report what was found-but-broken separately from found-nothing: a
+  // quarantined download looks identical to a missing one otherwise.
+  const blocked = found.tried.filter((p) => fs.existsSync(p) && !ffmpegWorks(p));
+  return { ffmpeg: !!found.path, ffmpegPath: found.path, blocked, searched: found.tried.length };
+});
+
+ipcMain.handle('export-locate-ffmpeg', async () => {
+  const res = await dialog.showOpenDialog(controlWin, {
+    title: 'Locate ffmpeg',
+    message: 'Choose the ffmpeg binary (Homebrew installs it at /opt/homebrew/bin/ffmpeg)',
+    properties: ['openFile'],
+    defaultPath: '/opt/homebrew/bin',
+  });
+  if (res.canceled || !res.filePaths.length) return { ok: false, canceled: true };
+  const chosen = res.filePaths[0];
+  if (!ffmpegWorks(chosen)) {
+    return { ok: false, error: `${path.basename(chosen)} would not run. If it was downloaded from the web, macOS may have quarantined it — try: xattr -d com.apple.quarantine "${chosen}"` };
+  }
+  try {
+    fs.writeFileSync(ffmpegPrefPath(), chosen, 'utf8');
+  } catch (_) { /* still usable this session */ }
+  return { ok: true, path: chosen };
+});
 
 ipcMain.handle('export-choose', async (e, suggested) => {
   const res = await dialog.showSaveDialog(controlWin, {
@@ -527,7 +604,7 @@ ipcMain.handle('export-write-file', (e, filePath, dataUrl) => {
 });
 
 ipcMain.handle('export-encode', (e, dir, outPath, fps) => new Promise((resolve) => {
-  const bin = findFfmpeg();
+  const bin = findFfmpeg().path;
   if (!bin) return resolve({ ok: false, error: 'ffmpeg not found' });
   // -crf 16 keeps test patterns clean: 1px lines are exactly what compression
   // destroys first, and a soft grid defeats the purpose of the clip.
