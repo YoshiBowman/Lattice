@@ -294,14 +294,29 @@ function installUnsignedMacUpdate() {
   }
 }
 
+// Staging directories are named `.lattice-update-XXXXXX` beside the app and
+// are removed at the end of every swap. One surviving means that swap died, so
+// anything still here is dead weight.
+function sweepOrphanedStaging() {
+  const parent = path.dirname(appBundlePath());
+  let entries = [];
+  try { entries = fs.readdirSync(parent); } catch (_) { return; }
+  entries
+    .filter((f) => f.startsWith('.lattice-update-'))
+    .forEach((f) => removeBundle(path.join(parent, f)));
+}
+
 function setupAutoUpdater() {
   if (!app.isPackaged) return; // dev runs from source — nothing to update
   if (process.platform === 'darwin') {
     macNeedsManualSwap = !macProperlySigned();
-    // clean up the previous bundle left behind by a manual swap
-    // clean up the previous bundle left behind by a manual swap (same asar
-    // hazard — this had been failing silently, so .old dirs accumulated)
-    setTimeout(() => removeBundle(appBundlePath() + '.old'), 3000);
+    // clean up after a manual swap: the previous bundle, plus any staging
+    // directories orphaned by a build whose own cleanup threw (the asar
+    // hazard) — those sat in /Applications holding a partial app each.
+    setTimeout(() => {
+      removeBundle(appBundlePath() + '.old');
+      sweepOrphanedStaging();
+    }, 3000);
   }
   autoUpdater.autoDownload = true;
   autoUpdater.autoInstallOnAppQuit = !macNeedsManualSwap; // Squirrel would fail silently
