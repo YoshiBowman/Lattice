@@ -95,6 +95,9 @@ input[type="text"] {
 .pattern-grid button:hover { border-color: var(--accent); }
 .pattern-grid button.active { background: var(--accent); border-color: var(--accent); color: #0b1220; font-weight: 600; }
 
+label.wall-driven > span, label.wall-driven { color: var(--accent); }
+label.wall-driven input[type="color"] { border-color: var(--accent); }
+
 .param, .oparam { display: none; }
 .param.visible, .oparam.visible { display: block; }
 

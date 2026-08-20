@@ -621,6 +621,37 @@ function syncPatternUI() {
   });
   $('#sizeVal').textContent = `${cfg.pattern.size}px`;
   $('#speedVal').textContent = `${cfg.pattern.speed}×`;
+  syncWallColorBinding();
+}
+
+// In per-wall mode the wall's colour replaces one of the pattern's colours.
+// Rather than leave that picker looking editable while being overridden, the
+// picker BECOMES the wall-colour control: same place, still works, and it says
+// which wall it is editing.
+function wallColorTarget() {
+  if (cfg.wallColorMode !== 'perWall') return null;
+  return window.LED_WALL_COLOR_PARAM(cfg.pattern.type);
+}
+
+function syncWallColorBinding() {
+  const target = wallColorTarget();
+  const w = curWall();
+  ['fg', 'bg', 'panelA', 'panelB'].forEach((id) => {
+    const input = $('#' + id);
+    const label = input.closest('label');
+    if (!label.dataset.baseLabel) label.dataset.baseLabel = label.childNodes[0].textContent;
+    const driven = id === target;
+    label.childNodes[0].textContent = driven ? `${w.name} colour` : label.dataset.baseLabel;
+    label.classList.toggle('wall-driven', driven);
+    input.value = driven ? (w.color || '#3fa9f5') : cfg.pattern[id];
+  });
+  const note = $('#wallColorNote');
+  if (note) {
+    note.style.display = cfg.wallColorMode === 'perWall' ? '' : 'none';
+    note.textContent = window.LED_WALL_COLOR_PARAM(cfg.pattern.type)
+      ? `Colours are per wall — this picker sets ${w.name}. Select another wall to set its colour.`
+      : 'This pattern is colour-critical, so it is never tinted per wall.';
+  }
 }
 
 // ---------- overlay pulse buttons & params ----------
@@ -2208,6 +2239,8 @@ function syncWallInputs() {
   const w = curWall();
   $('#wallName').value = w.name;
   $('#wallColor').value = w.color || '#3fa9f5';
+  $('#wallColorRow').style.display = cfg.wallColorMode === 'perWall' ? '' : 'none';
+  syncWallColorBinding();
   $('#wallMode').value = w.mode;
   $('#defineBy').value = w.defineBy;
   $('#mmW').value = w.mmW;
@@ -2317,7 +2350,16 @@ function wireInputs() {
   for (const id of ['fg', 'bg', 'panelA', 'panelB']) {
     const el = $('#' + id);
     el.value = cfg.pattern[id];
-    el.addEventListener('input', () => { cfg.pattern[id] = el.value; push(); });
+    el.addEventListener('input', () => {
+      if (wallColorTarget() === id) {
+        curWall().color = el.value;
+        $('#wallColor').value = el.value;
+        renderWalls();
+      } else {
+        cfg.pattern[id] = el.value;
+      }
+      push();
+    });
   }
 
   // panel-colour pairs (these chips carry data-pa/data-pb, unlike the wall
@@ -2437,11 +2479,14 @@ function wireInputs() {
   wcMode.checked = cfg.wallColorMode === 'perWall';
   wcMode.addEventListener('change', () => {
     cfg.wallColorMode = wcMode.checked ? 'perWall' : 'same';
+    $('#wallColorRow').style.display = wcMode.checked ? '' : 'none';
+    syncWallColorBinding();
     push();
     renderWalls();
   });
   $('#wallColor').addEventListener('input', () => {
     curWall().color = $('#wallColor').value;
+    syncWallColorBinding();
     push();
     renderWalls();
   });

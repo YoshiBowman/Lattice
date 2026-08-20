@@ -1062,6 +1062,16 @@
   ];
   const COLOR_CRITICAL = ['colorbars', 'gradient', 'graysteps'];
 
+  // Which of the pattern's own colours the wall identity replaces. The UI uses
+  // this to retarget that picker, so the control never sits there looking
+  // editable while being silently overridden.
+  function wallColorParam(type) {
+    if (COLOR_CRITICAL.indexOf(type) !== -1) return null;
+    if (type === 'solid') return 'bg';
+    if (type === 'panelmap') return 'panelA';
+    return 'fg';
+  }
+
   function wallPattern(pattern, wall, mode) {
     if (mode !== 'perWall' || !wall || !wall.color) return pattern;
     if (COLOR_CRITICAL.indexOf(pattern.type) !== -1) return pattern;
@@ -1158,6 +1168,7 @@
   window.LED_LOOP_PERIOD = loopPeriod;
   window.LED_WALL_PATTERN = wallPattern;
   window.LED_WALL_COLORS = WALL_COLORS;
+  window.LED_WALL_COLOR_PARAM = wallColorParam;
   window.LED_DRAW_CABLING = drawCabling;
   window.LED_RUN_LOAD = runLoad;
   window.LED_RUN_COLORS = RUN_COLORS;

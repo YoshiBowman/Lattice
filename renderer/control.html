@@ -34,7 +34,7 @@
         <h2>Wall Setup</h2>
         <div class="row2">
           <label style="flex:2">Wall name<input type="text" id="wallName" spellcheck="false" placeholder="e.g. US Center Portrait"></label>
-          <label style="flex:1">Colour<input type="color" id="wallColor" value="#3fa9f5"></label>
+          <label style="flex:1" id="wallColorRow">Colour<input type="color" id="wallColor" value="#3fa9f5"></label>
         </div>
         <div id="segmentOutputs"></div>
         <label>Panel layout
@@ -150,6 +150,7 @@
             <label class="param" data-param="panelA">Panel A<input type="color" id="panelA" value="#101010"></label>
             <label class="param" data-param="panelB">Panel B<input type="color" id="panelB" value="#303030"></label>
           </div>
+          <div id="wallColorNote" class="hint" style="display:none"></div>
           <div class="param preset-chips" data-param="panelA">
             <button class="chip" data-pa="#101010" data-pb="#303030">Grey</button>
             <button class="chip" data-pa="#c00000" data-pb="#00a000">Red / Green</button>
