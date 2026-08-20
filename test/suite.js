@@ -271,6 +271,24 @@ function check(name, ok, detail) {
   check('wave sweep is scale-independent', Math.abs(wave.big - wave.small) < 0.02,
     `1920=${wave.big.toFixed(3)} 960=${wave.small.toFixed(3)}`);
 
+  // ───────────────────────────────────────────── wall colours
+  section('wall colours');
+  const wc = JSON.parse(await evalIn(page, `(function(){
+    var saved = cfg.wallColorMode;
+    var walls = cfg.walls.length;
+    var w = cfg.walls[0];
+    var same = LED_WALL_PATTERN({...cfg.pattern, type:'grid', fg:'#ffffff'}, w, 'same');
+    var per  = LED_WALL_PATTERN({...cfg.pattern, type:'grid', fg:'#ffffff'}, w, 'perWall');
+    var bars = {...cfg.pattern, type:'colorbars'};
+    var critical = LED_WALL_PATTERN(bars, w, 'perWall') === bars;
+    var solid = LED_WALL_PATTERN({...cfg.pattern, type:'solid'}, w, 'perWall');
+    cfg.wallColorMode = saved;
+    return JSON.stringify({ hasColor:!!w.color, sameFg:same.fg, perFg:per.fg, critical:critical, solidBg:solid.bg });
+  })()`));
+  check('walls carry an identity colour', wc.hasColor && wc.sameFg === '#ffffff', JSON.stringify(wc));
+  check('per-wall mode tints the pattern', wc.perFg !== '#ffffff' && wc.perFg === wc.solidBg, `${wc.perFg}`);
+  check('colour-critical patterns are never tinted', wc.critical === true);
+
   // ───────────────────────────────────────────── loop export
   section('loop export');
   const periods = JSON.parse(await evalIn(page, `(function(){

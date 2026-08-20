@@ -26,12 +26,16 @@
         <h2>Walls</h2>
         <div id="wallList"></div>
         <button id="addWallBtn" class="btn">+ Add Wall</button>
+        <label class="check" style="margin-top:10px"><input type="checkbox" id="wallColorMode"> Colour each wall differently</label>
         <div class="hint">Select a wall to edit it below. “Window” opens it in a pre-vis window.</div>
       </section>
 
       <section class="card">
         <h2>Wall Setup</h2>
-        <label>Wall name<input type="text" id="wallName" spellcheck="false" placeholder="e.g. US Center Portrait"></label>
+        <div class="row2">
+          <label style="flex:2">Wall name<input type="text" id="wallName" spellcheck="false" placeholder="e.g. US Center Portrait"></label>
+          <label style="flex:1">Colour<input type="color" id="wallColor" value="#3fa9f5"></label>
+        </div>
         <div id="segmentOutputs"></div>
         <label>Panel layout
           <select id="wallMode">

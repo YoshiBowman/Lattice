@@ -156,6 +156,7 @@ input[type="text"] {
   padding: 8px 10px; margin-bottom: 6px; cursor: pointer;
 }
 .wall-row.selected { border-color: var(--accent); }
+.wall-row .wswatch { width: 12px; height: 12px; border-radius: 3px; flex-shrink: 0; }
 .wall-row .wname { font-weight: 600; flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .wall-row .wres { color: var(--muted); font-size: 11px; white-space: nowrap; }
 .wall-row .wctl { display: flex; gap: 4px; }

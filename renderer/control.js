@@ -14,6 +14,7 @@ const WALL_DEFAULTS = {
   panelW: 172, panelH: 172, panelsX: 8, panelsY: 4,
   colWidths: [500, 500], rowHeights: [500, 500],
   custom: false, width: 1376, height: 688,
+  color: '#3fa9f5', // identity colour, used when wall colours are set to Per wall
   // a wall carried by more than one output: one processor feed per segment
   split: { cols: 1, rows: 1, overlap: 0, colPanels: [], rowPanels: [] },
 };
@@ -29,9 +30,11 @@ function emptyCabling() {
 
 // WALL_DEFAULTS holds objects/arrays — every new wall needs its own copies or
 // walls would share cabling runs and column lists.
-function freshWall(id, name, over) {
+function freshWall(id, name, over, index) {
+  const palette = (window.LED_WALL_COLORS || ['#3fa9f5']);
   return {
     ...WALL_DEFAULTS,
+    color: palette[(index || 0) % palette.length],
     colWidths: WALL_DEFAULTS.colWidths.slice(),
     rowHeights: WALL_DEFAULTS.rowHeights.slice(),
     split: { ...WALL_DEFAULTS.split, colPanels: [], rowPanels: [] },
@@ -46,6 +49,7 @@ const DEFAULTS = {
   walls: [freshWall('w1', 'Wall 1')],
   selectedWall: 'w1',
   cablingLayer: 'signal',
+  wallColorMode: 'same', // 'same' | 'perWall'
   pattern: {
     type: 'grid', fg: '#ffffff', bg: '#000000', size: 16, speed: 2, gradMode: 'gray-h', dir: 'h',
     panelA: '#101010', panelB: '#303030', // Panel Map's two alternating colours
@@ -76,7 +80,9 @@ function normalizeConfig(saved) {
   }
   const walls = (saved.walls && saved.walls.length ? saved.walls : DEFAULTS.walls)
     .map((w, i) => {
-      const merged = { ...freshWall('w' + (i + 1), `Wall ${i + 1}`), ...w };
+      const merged = { ...freshWall('w' + (i + 1), `Wall ${i + 1}`, null, i), ...w };
+      // walls saved before identity colours existed get one from the palette
+      if (!merged.color) merged.color = freshWall('x', 'x', null, i).color;
       merged.split = { cols: 1, rows: 1, overlap: 0, colPanels: [], rowPanels: [], ...(w.split || {}) };
       // walls saved before cabling existed, or with a partial layer
       const base = emptyCabling();
@@ -90,6 +96,7 @@ function normalizeConfig(saved) {
     walls,
     selectedWall: walls.some((w) => w.id === saved.selectedWall) ? saved.selectedWall : walls[0].id,
     cablingLayer: saved.cablingLayer === 'power' ? 'power' : 'signal',
+    wallColorMode: saved.wallColorMode === 'perWall' ? 'perWall' : 'same',
     pattern: { ...DEFAULTS.pattern, ...saved.pattern },
     overlay: { ...DEFAULTS.overlay, ...saved.overlay },
     readout: { ...DEFAULTS.readout, ...saved.readout },
@@ -190,6 +197,13 @@ function renderWalls() {
       }
     });
 
+    if (cfg.wallColorMode === 'perWall') {
+      const sw = document.createElement('div');
+      sw.className = 'wswatch';
+      sw.style.background = w.color || '#3fa9f5';
+      row.appendChild(sw);
+    }
+
     const name = document.createElement('div');
     name.className = 'wname';
     name.textContent = w.name;
@@ -251,7 +265,7 @@ function newWallId() {
 }
 
 function addWall() {
-  const w = freshWall(newWallId(), `Wall ${cfg.walls.length + 1}`);
+  const w = freshWall(newWallId(), `Wall ${cfg.walls.length + 1}`, null, cfg.walls.length);
   cfg.walls.push(w);
   cfg.selectedWall = w.id;
   syncWallInputs();
@@ -684,6 +698,7 @@ function rebuildPreviewCfg() {
   const boxH = 300;
   const s = Math.min(previewBoxW / w.width, boxH / w.height, 1);
   previewCfg = s < 1 ? scaledCfgFor(w, s) : { wall: w, pattern: cfg.pattern, overlay: cfg.overlay };
+  previewCfg.pattern = window.LED_WALL_PATTERN(previewCfg.pattern, w, cfg.wallColorMode);
   previewCfg.readout = cfg.readout;
   previewCfg.cablingLayer = cfg.cablingLayer;
 }
@@ -1838,6 +1853,7 @@ function syncContentUI() {
   $('#roScrim').checked = cfg.readout.scrim !== false;
   $('#roFont').value = cfg.readout.font || 'mono';
   $('#roImageClear').style.display = cfg.readout.image ? '' : 'none';
+  $('#wallColorMode').checked = cfg.wallColorMode === 'perWall';
 }
 
 function flashButton(id, text) {
@@ -1894,7 +1910,10 @@ function exportWallPNG() {
   const c = document.createElement('canvas');
   c.width = w.width;
   c.height = w.height;
-  window.LED_RENDER_FRAME(c.getContext('2d'), { wall: w, pattern: cfg.pattern, overlay: cfg.overlay, readout: cfg.readout }, window.LED_NOW());
+  window.LED_RENDER_FRAME(c.getContext('2d'), {
+    wall: w, pattern: window.LED_WALL_PATTERN(cfg.pattern, w, cfg.wallColorMode),
+    overlay: cfg.overlay, readout: cfg.readout,
+  }, window.LED_NOW());
   const a = document.createElement('a');
   const safeName = (w.name || 'wall').replace(/[^\w-]+/g, '_');
   a.download = `lattice-${safeName}-${cfg.pattern.type}-${w.width}x${w.height}.png`;
@@ -2010,7 +2029,10 @@ async function runLoopExport() {
   c.width = p.wall.width;
   c.height = p.wall.height;
   const ctx = c.getContext('2d');
-  const frameCfg = { wall: p.wall, pattern: cfg.pattern, overlay: cfg.overlay, readout: cfg.readout };
+  const frameCfg = {
+    wall: p.wall, pattern: window.LED_WALL_PATTERN(cfg.pattern, p.wall, cfg.wallColorMode),
+    overlay: cfg.overlay, readout: cfg.readout,
+  };
 
   try {
     if (fmt === 'webm') {
@@ -2185,6 +2207,7 @@ function syncWallModeUI() {
 function syncWallInputs() {
   const w = curWall();
   $('#wallName').value = w.name;
+  $('#wallColor').value = w.color || '#3fa9f5';
   $('#wallMode').value = w.mode;
   $('#defineBy').value = w.defineBy;
   $('#mmW').value = w.mmW;
@@ -2408,6 +2431,20 @@ function wireInputs() {
   $('#exportBtn').addEventListener('click', exportWallPNG);
   $('#addVirtualBtn').addEventListener('click', addVirtualOutput);
   $('#addWallBtn').addEventListener('click', addWall);
+
+  // Wall identity colours: off by default so a single-wall show is unchanged.
+  const wcMode = $('#wallColorMode');
+  wcMode.checked = cfg.wallColorMode === 'perWall';
+  wcMode.addEventListener('change', () => {
+    cfg.wallColorMode = wcMode.checked ? 'perWall' : 'same';
+    push();
+    renderWalls();
+  });
+  $('#wallColor').addEventListener('input', () => {
+    curWall().color = $('#wallColor').value;
+    push();
+    renderWalls();
+  });
   wireExport();
   $('#saveShowBtn').addEventListener('click', saveShowFile);
   $('#loadShowBtn').addEventListener('click', loadShowFile);

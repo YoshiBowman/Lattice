@@ -1051,6 +1051,29 @@
     return { ms, exact: true, animated: true };
   }
 
+
+  // Wall identity colours. In a multi-wall show it is hard to tell which feed
+  // is which; giving each wall its own colour makes that obvious at a glance.
+  // Colour-critical patterns are deliberately left alone — tinting Colour Bars,
+  // a Gradient or Gray Steps would destroy the thing they exist to measure.
+  const WALL_COLORS = [
+    '#3fa9f5', '#3fb950', '#f5a623', '#e5534b', '#bd93f9',
+    '#00d4c8', '#ff79c6', '#9fd356', '#ffd166', '#7aa2f7', '#c0c0c0',
+  ];
+  const COLOR_CRITICAL = ['colorbars', 'gradient', 'graysteps'];
+
+  function wallPattern(pattern, wall, mode) {
+    if (mode !== 'perWall' || !wall || !wall.color) return pattern;
+    if (COLOR_CRITICAL.indexOf(pattern.type) !== -1) return pattern;
+    const out = { ...pattern };
+    // Solid has no foreground, so its background IS the colour; Panel Map keeps
+    // its checkerboard but takes the wall colour as one of the two tiles.
+    if (pattern.type === 'solid') out.bg = wall.color;
+    else if (pattern.type === 'panelmap') out.panelA = wall.color;
+    else out.fg = wall.color;
+    return out;
+  }
+
   function drawDynamicLayers(ctx, cfg, t) {
     const ovCfg = cfg.overlay;
     const ov = ovCfg && OVERLAYS[ovCfg.type];
@@ -1133,6 +1156,8 @@
   window.LED_SPLIT_SPANS = splitSpans;
   window.LED_NOW = now;
   window.LED_LOOP_PERIOD = loopPeriod;
+  window.LED_WALL_PATTERN = wallPattern;
+  window.LED_WALL_COLORS = WALL_COLORS;
   window.LED_DRAW_CABLING = drawCabling;
   window.LED_RUN_LOAD = runLoad;
   window.LED_RUN_COLORS = RUN_COLORS;

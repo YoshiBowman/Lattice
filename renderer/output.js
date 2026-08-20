@@ -166,9 +166,12 @@ let renderCfg = null;
 
 function rebuildRenderCfg() {
   const oc = myOutputCfg();
+  const w = myWall();
   renderCfg = {
-    wall: myWall(),
-    pattern: cfg.pattern,
+    wall: w,
+    // each output tints to the wall it carries, so several walls running at
+    // once are told apart at a glance
+    pattern: window.LED_WALL_PATTERN(cfg.pattern, w, cfg.wallColorMode),
     overlay: cfg.overlay,
     readout: cfg.readout,
     centerLabel: oc.label,

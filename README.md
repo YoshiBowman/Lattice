@@ -57,6 +57,10 @@ git tag v<version> && git push origin main --tags
   assigns and starts it in one step. The whole show can be pre-vis'd and mapped before a
   single processor is connected. Pre-vis windows resize freely: fit letterboxes, fill
   crops, stretch fills the window, 1:1 shows true pixels.
+- **Wall colours** — tick "Colour each wall differently" and every wall takes its own
+  identity colour from a palette (editable per wall), so several walls running at once are
+  told apart at a glance. Colour-critical patterns — Colour Bars, Gradient, Gray Steps —
+  are deliberately left untinted, since tinting them would destroy what they measure.
 - **Wall setup** — define panels the way spec sheets do: **physical size (mm) + pixel
   pitch** (e.g. 500×500 mm @ 2.9 → 172×172 px per panel, with 500×500 / 500×1000 mm and
   P1.9–P5.2 quick presets), or enter pixels directly. Set panel count and the wall canvas
