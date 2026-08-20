@@ -289,6 +289,35 @@ function check(name, ok, detail) {
   check('per-wall mode tints the pattern', wc.perFg !== '#ffffff' && wc.perFg === wc.solidBg, `${wc.perFg}`);
   check('colour-critical patterns are never tinted', wc.critical === true);
 
+  // Panel Map and Checkerboard fill BOTH their colours, so both must be the
+  // wall's — a global Panel B made every wall share the same second tile.
+  const wc2 = JSON.parse(await evalIn(page, `(function(){
+    var saved = { mode: cfg.wallColorMode, type: cfg.pattern.type, sel: cfg.selectedWall };
+    cfg.wallColorMode = 'perWall'; cfg.pattern.type = 'panelmap';
+    var a = cfg.walls[0], b = freshWall('probe', 'PROBE', null, 1);
+    var pa = LED_WALL_PATTERN(cfg.pattern, a, 'perWall');
+    var pb = LED_WALL_PATTERN(cfg.pattern, b, 'perWall');
+    cfg.selectedWall = a.id; syncPatternUI();
+    var lblA = document.querySelector('.param[data-param="panelA"]').childNodes[0].textContent;
+    var lblB = document.querySelector('.param[data-param="panelB"]').childNodes[0].textContent;
+    var pickerB = document.querySelector('#panelB').value;
+    var chk = LED_WALL_PATTERN({...cfg.pattern, type:'checker'}, a, 'perWall');
+    var grid = LED_WALL_PATTERN({...cfg.pattern, type:'grid', bg:'#000000'}, a, 'perWall');
+    cfg.wallColorMode = saved.mode; cfg.pattern.type = saved.type; cfg.selectedWall = saved.sel;
+    syncPatternUI();
+    return JSON.stringify({ aB:pa.panelB, bB:pb.panelB, aA:pa.panelA, bA:pb.panelA,
+      lblA:lblA, lblB:lblB, pickerB:pickerB, want2:a.color2,
+      chkFg:chk.fg, chkBg:chk.bg, c:a.color, c2:a.color2, gridBg:grid.bg });
+  })()`));
+  check('both Panel Map colours come from the wall',
+    wc2.aA !== wc2.bA && wc2.aB !== wc2.bB, `A ${wc2.aA}/${wc2.bA}  B ${wc2.aB}/${wc2.bB}`);
+  check('both colour pickers retarget to the selected wall',
+    /colour$/.test(wc2.lblA) && /colour 2$/.test(wc2.lblB) && wc2.pickerB === wc2.want2,
+    `${wc2.lblA} | ${wc2.lblB} = ${wc2.pickerB}`);
+  check('checkerboard carries the pair', wc2.chkFg === wc2.c && wc2.chkBg === wc2.c2,
+    `${wc2.chkFg} / ${wc2.chkBg}`);
+  check('a plain background stays a background', wc2.gridBg === '#000000', wc2.gridBg);
+
   // ───────────────────────────────────────────── loop export
   section('loop export');
   const periods = JSON.parse(await evalIn(page, `(function(){

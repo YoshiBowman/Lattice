@@ -1062,6 +1062,16 @@
   ];
   const COLOR_CRITICAL = ['colorbars', 'gradient', 'graysteps'];
 
+  // A dimmed companion, so a new wall has a usable two-tone identity without
+  // anyone picking a second colour by hand.
+  function dimColor(hex, f) {
+    const n = parseInt(String(hex || '#3fa9f5').slice(1), 16);
+    const r = Math.round(((n >> 16) & 255) * f);
+    const g = Math.round(((n >> 8) & 255) * f);
+    const b = Math.round((n & 255) * f);
+    return '#' + [r, g, b].map((v) => Math.max(0, Math.min(255, v)).toString(16).padStart(2, '0')).join('');
+  }
+
   // Which of the pattern's own colours the wall identity replaces. The UI uses
   // this to retarget that picker, so the control never sits there looking
   // editable while being silently overridden.
@@ -1070,6 +1080,16 @@
     if (type === 'solid') return 'bg';
     if (type === 'panelmap') return 'panelA';
     return 'fg';
+  }
+
+  // Patterns whose two colours are both panel fills — a checkerboard either
+  // way — take both wall colours. Everywhere else the second colour is a
+  // background, which should stay the operator's choice rather than becoming
+  // an identity colour.
+  function wallColorParam2(type) {
+    if (type === 'panelmap') return 'panelB';
+    if (type === 'checker') return 'bg';
+    return null;
   }
 
   function wallPattern(pattern, wall, mode) {
@@ -1081,6 +1101,8 @@
     if (pattern.type === 'solid') out.bg = wall.color;
     else if (pattern.type === 'panelmap') out.panelA = wall.color;
     else out.fg = wall.color;
+    const second = wallColorParam2(pattern.type);
+    if (second) out[second] = wall.color2 || dimColor(wall.color, 0.35);
     return out;
   }
 
@@ -1169,6 +1191,8 @@
   window.LED_WALL_PATTERN = wallPattern;
   window.LED_WALL_COLORS = WALL_COLORS;
   window.LED_WALL_COLOR_PARAM = wallColorParam;
+  window.LED_WALL_COLOR_PARAM2 = wallColorParam2;
+  window.LED_DIM_COLOR = dimColor;
   window.LED_DRAW_CABLING = drawCabling;
   window.LED_RUN_LOAD = runLoad;
   window.LED_RUN_COLORS = RUN_COLORS;

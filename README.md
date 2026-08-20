@@ -58,9 +58,13 @@ git tag v<version> && git push origin main --tags
   single processor is connected. Pre-vis windows resize freely: fit letterboxes, fill
   crops, stretch fills the window, 1:1 shows true pixels.
 - **Wall colours** — tick "Colour each wall differently" and every wall takes its own
-  identity colour from a palette (editable per wall), so several walls running at once are
-  told apart at a glance. Colour-critical patterns — Colour Bars, Gradient, Gray Steps —
-  are deliberately left untinted, since tinting them would destroy what they measure.
+  identity colour from a palette, so several walls running at once are told apart at a
+  glance. Both colours are yours to set: the pattern's colour pickers retarget to the
+  selected wall (labelled "STAGE LEFT colour" / "colour 2"), so patterns that fill two
+  colours — Panel Map, Checkerboard — carry a full two-tone identity per wall rather than
+  sharing one global second tile. A plain background stays a background. Colour-critical
+  patterns — Colour Bars, Gradient, Gray Steps — are deliberately left untinted, since
+  tinting them would destroy what they measure.
 - **Wall setup** — define panels the way spec sheets do: **physical size (mm) + pixel
   pitch** (e.g. 500×500 mm @ 2.9 → 172×172 px per panel, with 500×500 / 500×1000 mm and
   P1.9–P5.2 quick presets), or enter pixels directly. Set panel count and the wall canvas

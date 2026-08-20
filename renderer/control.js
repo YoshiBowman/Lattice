@@ -14,7 +14,8 @@ const WALL_DEFAULTS = {
   panelW: 172, panelH: 172, panelsX: 8, panelsY: 4,
   colWidths: [500, 500], rowHeights: [500, 500],
   custom: false, width: 1376, height: 688,
-  color: '#3fa9f5', // identity colour, used when wall colours are set to Per wall
+  color: '#3fa9f5',  // identity colour, used when wall colours are set to Per wall
+  color2: '#163a54', // its companion, for patterns whose two colours are both fills
   // a wall carried by more than one output: one processor feed per segment
   split: { cols: 1, rows: 1, overlap: 0, colPanels: [], rowPanels: [] },
 };
@@ -35,6 +36,7 @@ function freshWall(id, name, over, index) {
   return {
     ...WALL_DEFAULTS,
     color: palette[(index || 0) % palette.length],
+    color2: window.LED_DIM_COLOR(palette[(index || 0) % palette.length], 0.35),
     colWidths: WALL_DEFAULTS.colWidths.slice(),
     rowHeights: WALL_DEFAULTS.rowHeights.slice(),
     split: { ...WALL_DEFAULTS.split, colPanels: [], rowPanels: [] },
@@ -83,6 +85,7 @@ function normalizeConfig(saved) {
       const merged = { ...freshWall('w' + (i + 1), `Wall ${i + 1}`, null, i), ...w };
       // walls saved before identity colours existed get one from the palette
       if (!merged.color) merged.color = freshWall('x', 'x', null, i).color;
+      if (!merged.color2) merged.color2 = window.LED_DIM_COLOR(merged.color, 0.35);
       merged.split = { cols: 1, rows: 1, overlap: 0, colPanels: [], rowPanels: [], ...(w.split || {}) };
       // walls saved before cabling existed, or with a partial layer
       const base = emptyCabling();
@@ -633,18 +636,28 @@ function wallColorTarget() {
   return window.LED_WALL_COLOR_PARAM(cfg.pattern.type);
 }
 
+// the second colour is only an identity colour where both colours are fills
+function wallColorTarget2() {
+  if (cfg.wallColorMode !== 'perWall') return null;
+  return window.LED_WALL_COLOR_PARAM2(cfg.pattern.type);
+}
+
 function syncWallColorBinding() {
   const target = wallColorTarget();
+  const target2 = wallColorTarget2();
   const w = curWall();
   ['fg', 'bg', 'panelA', 'panelB'].forEach((id) => {
     const input = $('#' + id);
     const label = input.closest('label');
     if (!label.dataset.baseLabel) label.dataset.baseLabel = label.childNodes[0].textContent;
-    const driven = id === target;
-    label.childNodes[0].textContent = driven ? `${w.name} colour` : label.dataset.baseLabel;
-    label.classList.toggle('wall-driven', driven);
-    input.value = driven ? (w.color || '#3fa9f5') : cfg.pattern[id];
+    const driven = id === target ? 1 : (id === target2 ? 2 : 0);
+    label.childNodes[0].textContent = driven === 1 ? `${w.name} colour`
+      : driven === 2 ? `${w.name} colour 2` : label.dataset.baseLabel;
+    label.classList.toggle('wall-driven', !!driven);
+    input.value = driven === 1 ? (w.color || '#3fa9f5')
+      : driven === 2 ? (w.color2 || window.LED_DIM_COLOR(w.color, 0.35)) : cfg.pattern[id];
   });
+  $('#wallColor2').value = w.color2 || window.LED_DIM_COLOR(w.color, 0.35);
   const note = $('#wallColorNote');
   if (note) {
     note.style.display = cfg.wallColorMode === 'perWall' ? '' : 'none';
@@ -2240,6 +2253,7 @@ function syncWallInputs() {
   $('#wallName').value = w.name;
   $('#wallColor').value = w.color || '#3fa9f5';
   $('#wallColorRow').style.display = cfg.wallColorMode === 'perWall' ? '' : 'none';
+  $('#wallColor2Row').style.display = cfg.wallColorMode === 'perWall' ? '' : 'none';
   syncWallColorBinding();
   $('#wallMode').value = w.mode;
   $('#defineBy').value = w.defineBy;
@@ -2355,6 +2369,9 @@ function wireInputs() {
         curWall().color = el.value;
         $('#wallColor').value = el.value;
         renderWalls();
+      } else if (wallColorTarget2() === id) {
+        curWall().color2 = el.value;
+        $('#wallColor2').value = el.value;
       } else {
         cfg.pattern[id] = el.value;
       }
@@ -2480,6 +2497,7 @@ function wireInputs() {
   wcMode.addEventListener('change', () => {
     cfg.wallColorMode = wcMode.checked ? 'perWall' : 'same';
     $('#wallColorRow').style.display = wcMode.checked ? '' : 'none';
+    $('#wallColor2Row').style.display = wcMode.checked ? '' : 'none';
     syncWallColorBinding();
     push();
     renderWalls();
@@ -2489,6 +2507,11 @@ function wireInputs() {
     syncWallColorBinding();
     push();
     renderWalls();
+  });
+  $('#wallColor2').addEventListener('input', () => {
+    curWall().color2 = $('#wallColor2').value;
+    syncWallColorBinding();
+    push();
   });
   wireExport();
   $('#saveShowBtn').addEventListener('click', saveShowFile);
