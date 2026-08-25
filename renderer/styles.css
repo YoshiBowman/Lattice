@@ -100,6 +100,10 @@ label.wall-driven input[type="color"] { border-color: var(--accent); }
 
 .param, .oparam { display: none; }
 .param.visible, .oparam.visible { display: block; }
+.param.check.visible { display: flex; }
+.hint-i { display: inline-flex; align-items: center; justify-content: center;
+  width: 15px; height: 15px; border-radius: 50%; border: 1px solid var(--border);
+  color: var(--muted); font-size: 10px; cursor: help; flex: none; }
 
 .computed {
   margin-top: 3px; padding: 6px 8px;

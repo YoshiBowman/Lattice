@@ -54,6 +54,7 @@ const DEFAULTS = {
   wallColorMode: 'same', // 'same' | 'perWall'
   pattern: {
     type: 'grid', fg: '#ffffff', bg: '#000000', size: 16, speed: 2, gradMode: 'gray-h', dir: 'h',
+    circles: false, // aspect-ratio circles over the grid — an oval means something is scaling
     panelA: '#101010', panelB: '#303030', // Panel Map's two alternating colours
   },
   overlay: { type: 'none', color: '#3fb950', opacity: 70, speed: 1, dir: 'h' },
@@ -1886,6 +1887,7 @@ function syncContentUI() {
   $('#speedVal').textContent = `${cfg.pattern.speed}×`;
   $('#gradMode').value = cfg.pattern.gradMode;
   $('#dir').value = cfg.pattern.dir || 'h';
+  $('#patCircles').checked = !!cfg.pattern.circles;
   $('#ovColor').value = cfg.overlay.color;
   $('#ovOpacity').value = cfg.overlay.opacity;
   $('#ovOpacityVal').textContent = `${cfg.overlay.opacity}%`;
@@ -2406,6 +2408,10 @@ function wireInputs() {
     $('#speedVal').textContent = `${cfg.pattern.speed}×`;
     push();
   });
+
+  const patCircles = $('#patCircles');
+  patCircles.checked = !!cfg.pattern.circles;
+  patCircles.addEventListener('change', () => { cfg.pattern.circles = patCircles.checked; push(); });
 
   const gradMode = $('#gradMode');
   gradMode.value = cfg.pattern.gradMode;

@@ -318,6 +318,71 @@ function check(name, ok, detail) {
     `${wc2.chkFg} / ${wc2.chkBg}`);
   check('a plain background stays a background', wc2.gridBg === '#000000', wc2.gridBg);
 
+  // ───────────────────────────────────────────── distortion circles
+  section('distortion circles');
+  // Measured by diffing a render with circles against one without, so grid
+  // lines and the wall border can never be mistaken for a circle.
+  await evalIn(page, `window.__circDiff = function(W,H,FW,FH){
+    function frame(on){
+      var wall={id:'m',name:'M',width:W,height:H,mode:'uniform',defineBy:'px',
+        panelW:172,panelH:172,panelsX:Math.round(W/172),panelsY:Math.round(H/172)};
+      var s=document.createElement('canvas'); s.width=W; s.height=H;
+      LED_CREATE_FRAME_RENDERER()(s.getContext('2d'),{wall:wall,
+        pattern:{...cfg.pattern,type:'grid',fg:'#ffffff',bg:'#000000',size:16,circles:on},
+        overlay:{type:'none'},readout:{label:false,dims:false},centerLabel:''},0);
+      var o=document.createElement('canvas'); o.width=FW||W; o.height=FH||H;
+      var c=o.getContext('2d'); c.imageSmoothingEnabled=true;
+      c.drawImage(s,0,0,W,H,0,0,o.width,o.height);
+      return c.getImageData(0,0,o.width,o.height).data;
+    }
+    var fw=FW||W, fh=FH||H, a=frame(false), b=frame(true);
+    var cx=Math.floor(fw/2), cy=Math.floor(fh/2);
+    function span(dx,dy){var last=0;
+      for(var i=1;i<Math.max(fw,fh);i++){var x=cx+dx*i,y=cy+dy*i;
+        if(x<0||y<0||x>=fw||y>=fh)break; var o=(y*fw+x)*4;
+        if(Math.abs(a[o]-b[o])>40) last=i;}
+      return last;}
+    var changed=0; for(var i=0;i<a.length;i+=4) if(Math.abs(a[i]-b[i])>40) changed++;
+    return {rx:(span(1,0)+span(-1,0))/2, ry:(span(0,-1)+span(0,1))/2,
+      l:span(-1,0), r:span(1,0), u:span(0,-1), d:span(0,1), changed:changed};
+  }; 1`);
+
+  const circ = JSON.parse(await evalIn(page, `JSON.stringify(window.__circDiff(1720,1032))`));
+  check('the centre circle is geometrically round', Math.abs(circ.rx - circ.ry) <= 2,
+    `rx=${circ.rx} ry=${circ.ry}`);
+  check('it is centred and spans the short axis',
+    Math.abs(circ.l - circ.r) <= 2 && Math.abs(circ.u - circ.d) <= 2 && Math.abs(circ.ry - 513) < 8,
+    `L${circ.l} R${circ.r} U${circ.u} D${circ.d}`);
+
+  const circDefault = JSON.parse(await evalIn(page,
+    `JSON.stringify({def: DEFAULTS.pattern.circles === true, param: LED_PATTERNS.grid.params.indexOf('circles') >= 0})`));
+  check('off by default, and offered on the Grid pattern',
+    circDefault.def === false && circDefault.param === true, JSON.stringify(circDefault));
+
+  const portrait = JSON.parse(await evalIn(page, `JSON.stringify(window.__circDiff(1032,1720))`));
+  check('round on a portrait wall too', Math.abs(portrait.rx - portrait.ry) <= 2,
+    `rx=${portrait.rx} ry=${portrait.ry}`);
+
+  // the whole point: a wall pushed through a frame of the wrong shape
+  const stretched = JSON.parse(await evalIn(page, `JSON.stringify(window.__circDiff(1720,1032,1920,1080))`));
+  const outOfRound = Math.abs(stretched.rx / stretched.ry - 1) * 100;
+  check('a stretched frame reads as an oval', outOfRound > 5, `${outOfRound.toFixed(1)}% out of round`);
+
+  const layout = JSON.parse(await evalIn(page, `JSON.stringify({
+    norm: LED_DISTORTION_CIRCLES({width:1720,height:1032}).list.length,
+    wide: LED_DISTORTION_CIRCLES({width:4128,height:516}).list.length,
+    lw:   LED_DISTORTION_CIRCLES({width:1720,height:1032}).lw,
+    lwBig:LED_DISTORTION_CIRCLES({width:8000,height:4000}).lw,
+    inside: LED_DISTORTION_CIRCLES({width:1720,height:1032}).list
+      .every(function(c){return c[0]-c[2]>=-1 && c[1]-c[2]>=-1 && c[0]+c[2]<=1721 && c[1]+c[2]<=1033;})
+  })`));
+  check('centre circle plus four corners', layout.norm === 5, `${layout.norm} circles`);
+  check('a long wall gets circles across its span', layout.wide > layout.norm,
+    `8:1 wall = ${layout.wide} circles`);
+  check('line weight scales with the wall', layout.lwBig > layout.lw,
+    `1720px→${layout.lw}px, 8000px→${layout.lwBig}px`);
+  check('every circle sits inside the wall', layout.inside === true);
+
   // ───────────────────────────────────────────── loop export
   section('loop export');
   const periods = JSON.parse(await evalIn(page, `(function(){

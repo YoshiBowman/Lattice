@@ -152,6 +152,57 @@
     };
   }
 
+  // ── Distortion circles (the "aspect ratio circles" of a SMPTE-style slate) ──
+  // A circle is the only shape whose distortion you cannot talk yourself out
+  // of: a grid stretched 5% on one axis still looks like a grid, while a 5%
+  // oval is obvious from the back of the room. The convention is one large
+  // circle at centre plus small ones at the corners — the corners catch what
+  // the centre cannot (edge scaling, keystone, a processor whose capture
+  // window doesn't match its output).
+  function distortionCircles(wall) {
+    const w = wall.width, h = wall.height;
+    const short = Math.min(w, h), long = Math.max(w, h);
+    const lw = Math.max(2, Math.round(short / 500));
+    const pad = Math.ceil(lw / 2) + 1;
+    const big = short / 2 - pad;      // touches the short edges
+    const small = short / 8;
+    const inset = small + pad;   // tangent to the edges, so a cropped edge clips a circle visibly
+    const list = [
+      [w / 2, h / 2, big],
+      [inset, inset, small], [w - inset, inset, small],
+      [inset, h - inset, small], [w - inset, h - inset, small],
+    ];
+    // A wall far longer than it is tall leaves most of its span unchecked —
+    // the centre circle can only ever be as wide as the short edge.
+    if (long / short >= 2.5) {
+      const n = Math.round(long / short);
+      for (let i = 1; i < n; i++) {
+        const f = i / n;
+        const x = w >= h ? w * f : w / 2;
+        const y = w >= h ? h / 2 : h * f;
+        if (Math.hypot(x - w / 2, y - h / 2) > big + small) list.push([x, y, small]);
+      }
+    }
+    return { lw, list };
+  }
+
+  function drawDistortionCircles(ctx, cfg) {
+    if (!cfg.pattern.circles) return;
+    const { lw, list } = distortionCircles(cfg.wall);
+    ctx.lineJoin = 'round';
+    // haloed in the background colour so the circles stay readable wherever
+    // they cross a grid line, without spending a second colour picker on them
+    for (const pass of [[cfg.pattern.bg, lw + 4], [cfg.pattern.fg, lw]]) {
+      ctx.strokeStyle = pass[0];
+      ctx.lineWidth = pass[1];
+      for (const c of list) {
+        ctx.beginPath();
+        ctx.arc(c[0], c[1], c[2], 0, Math.PI * 2);
+        ctx.stroke();
+      }
+    }
+  }
+
   const PATTERNS = {
     solid: {
       name: 'Solid Color',
@@ -176,7 +227,7 @@
 
     grid: {
       name: 'Grid',
-      params: ['fg', 'bg', 'size'],
+      params: ['fg', 'bg', 'size', 'circles'],
       draw(ctx, cfg) {
         // Panel-aware: bright lines on every panel seam; the fine sub-grid
         // restarts at each panel's origin so every panel looks identical
@@ -197,6 +248,7 @@
         ctx.fillStyle = cfg.pattern.fg;
         for (const x of g.xs) ctx.fillRect(Math.min(x, w - 1), 0, 1, h);
         for (const y of g.ys) ctx.fillRect(0, Math.min(y, h - 1), w, 1);
+        drawDistortionCircles(ctx, cfg);
       },
     },
 
@@ -1182,6 +1234,7 @@
   window.LED_RENDER_FRAME = renderFrame;
   window.LED_FRAME_ANIMATED = frameAnimated;
   window.LED_WALL_GRID = wallGrid;
+  window.LED_DISTORTION_CIRCLES = distortionCircles;
   window.LED_COL_LETTER = colLetter;
   window.LED_WALL_SEGMENTS = wallSegments;
   window.LED_WALL_IS_SPLIT = wallIsSplit;
