@@ -152,36 +152,29 @@
     };
   }
 
-  // ── Distortion circles (the "aspect ratio circles" of a SMPTE-style slate) ──
-  // A circle is the only shape whose distortion you cannot talk yourself out
+  // ── Distortion circles (the circularity check of a pixel test slate) ──
+  // A circle is the one shape whose distortion you cannot talk yourself out
   // of: a grid stretched 5% on one axis still looks like a grid, while a 5%
-  // oval is obvious from the back of the room. The convention is one large
-  // circle at centre plus small ones at the corners — the corners catch what
-  // the centre cannot (edge scaling, keystone, a processor whose capture
-  // window doesn't match its output).
+  // oval is obvious from the back of the room.
+  //
+  // Equal circles, each as tall as the wall, tiled tangent along the long axis
+  // from the centre out. Equal is the whole point — any one of them reading as
+  // an oval is directly comparable against its neighbours, and a wall four
+  // circles long gets checked end to end instead of by one big circle in the
+  // middle. The ones at the ends run off the edge, which is exactly where a
+  // cropped or misplaced capture window shows itself.
   function distortionCircles(wall) {
     const w = wall.width, h = wall.height;
-    const short = Math.min(w, h), long = Math.max(w, h);
+    const short = Math.min(w, h);
+    const horiz = w >= h;
+    const long = horiz ? w : h;
+    const r = short / 2;               // tangent to both long edges
     const lw = Math.max(2, Math.round(short / 500));
-    const pad = Math.ceil(lw / 2) + 1;
-    const big = short / 2 - pad;      // touches the short edges
-    const small = short / 8;
-    const inset = small + pad;   // tangent to the edges, so a cropped edge clips a circle visibly
-    const list = [
-      [w / 2, h / 2, big],
-      [inset, inset, small], [w - inset, inset, small],
-      [inset, h - inset, small], [w - inset, h - inset, small],
-    ];
-    // A wall far longer than it is tall leaves most of its span unchecked —
-    // the centre circle can only ever be as wide as the short edge.
-    if (long / short >= 2.5) {
-      const n = Math.round(long / short);
-      for (let i = 1; i < n; i++) {
-        const f = i / n;
-        const x = w >= h ? w * f : w / 2;
-        const y = w >= h ? h / 2 : h * f;
-        if (Math.hypot(x - w / 2, y - h / 2) > big + small) list.push([x, y, small]);
-      }
+    const n = Math.ceil((long / 2 - r) / short);   // how many each side of centre
+    const list = [];
+    for (let i = -n; i <= n; i++) {
+      const off = i * short;
+      list.push(horiz ? [w / 2 + off, h / 2, r] : [w / 2, h / 2 + off, r]);
     }
     return { lw, list };
   }

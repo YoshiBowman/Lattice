@@ -337,11 +337,13 @@ function check(name, ok, detail) {
     }
     var fw=FW||W, fh=FH||H, a=frame(false), b=frame(true);
     var cx=Math.floor(fw/2), cy=Math.floor(fh/2);
-    function span(dx,dy){var last=0;
+    // first changed pixel, not the furthest: the circles tile, so a ray leaving
+    // the centre crosses neighbours as well as the circle we want to measure
+    function span(dx,dy){
       for(var i=1;i<Math.max(fw,fh);i++){var x=cx+dx*i,y=cy+dy*i;
         if(x<0||y<0||x>=fw||y>=fh)break; var o=(y*fw+x)*4;
-        if(Math.abs(a[o]-b[o])>40) last=i;}
-      return last;}
+        if(Math.abs(a[o]-b[o])>40) return i;}
+      return 0;}
     var changed=0; for(var i=0;i<a.length;i+=4) if(Math.abs(a[i]-b[i])>40) changed++;
     return {rx:(span(1,0)+span(-1,0))/2, ry:(span(0,-1)+span(0,1))/2,
       l:span(-1,0), r:span(1,0), u:span(0,-1), d:span(0,1), changed:changed};
@@ -368,20 +370,34 @@ function check(name, ok, detail) {
   const outOfRound = Math.abs(stretched.rx / stretched.ry - 1) * 100;
   check('a stretched frame reads as an oval', outOfRound > 5, `${outOfRound.toFixed(1)}% out of round`);
 
-  const layout = JSON.parse(await evalIn(page, `JSON.stringify({
-    norm: LED_DISTORTION_CIRCLES({width:1720,height:1032}).list.length,
-    wide: LED_DISTORTION_CIRCLES({width:4128,height:516}).list.length,
-    lw:   LED_DISTORTION_CIRCLES({width:1720,height:1032}).lw,
-    lwBig:LED_DISTORTION_CIRCLES({width:8000,height:4000}).lw,
-    inside: LED_DISTORTION_CIRCLES({width:1720,height:1032}).list
-      .every(function(c){return c[0]-c[2]>=-1 && c[1]-c[2]>=-1 && c[0]+c[2]<=1721 && c[1]+c[2]<=1033;})
-  })`));
-  check('centre circle plus four corners', layout.norm === 5, `${layout.norm} circles`);
-  check('a long wall gets circles across its span', layout.wide > layout.norm,
-    `8:1 wall = ${layout.wide} circles`);
-  check('line weight scales with the wall', layout.lwBig > layout.lw,
-    `1720px→${layout.lw}px, 8000px→${layout.lwBig}px`);
-  check('every circle sits inside the wall', layout.inside === true);
+  const layout = JSON.parse(await evalIn(page, `(function(){
+    function lay(W,H){var d=LED_DISTORTION_CIRCLES({width:W,height:H});
+      return {n:d.list.length, r:d.list.map(function(c){return c[2];}),
+        cx:d.list.map(function(c){return c[0];}), cy:d.list.map(function(c){return c[1];}), lw:d.lw};}
+    return JSON.stringify({ref:lay(3840,1080), hd:lay(1720,1032), wide:lay(4128,516),
+      sq:lay(1032,1032), port:lay(516,4128), big:lay(8000,4000)});})()`));
+  const uniform = (o) => new Set(o.r).size === 1;
+  const tangent = (o, axis) => o[axis].every((v, i, a) => i === 0 || Math.abs(a[i] - a[i - 1] - 2 * o.r[0]) < 0.001);
+
+  check('every circle is the same size, on every wall shape',
+    [layout.ref, layout.hd, layout.wide, layout.port].every(uniform),
+    `radii: ${layout.ref.r[0]}, ${layout.hd.r[0]}, ${layout.wide.r[0]}`);
+  check('each circle is as tall as the wall',
+    layout.ref.r[0] === 540 && layout.hd.r[0] === 516, `3840x1080 → r=${layout.ref.r[0]}`);
+  check('neighbours are tangent — no gap, no overlap',
+    tangent(layout.ref, 'cx') && tangent(layout.wide, 'cx') && tangent(layout.port, 'cy'));
+  check('the row is centred on the wall',
+    layout.ref.cx[0] + layout.ref.cx[layout.ref.n - 1] === 3840
+    && layout.hd.cx[0] + layout.hd.cx[layout.hd.n - 1] === 1720);
+  check('a 3840x1080 wall matches the reference slate: 5 circles, 1080 apart',
+    layout.ref.n === 5 && layout.ref.cx.join() === '-240,840,1920,3000,4080', layout.ref.cx.join(', '));
+  check('a square wall gets exactly one', layout.sq.n === 1 && layout.sq.r[0] === 516);
+  check('a portrait wall tiles down instead of across',
+    layout.port.cx.every((x) => x === 258) && new Set(layout.port.cy).size === layout.port.n,
+    `${layout.port.n} circles down the wall`);
+  check('a long wall is covered end to end', layout.wide.n >= 8, `8:1 wall = ${layout.wide.n} circles`);
+  check('line weight scales with the wall', layout.big.lw > layout.hd.lw,
+    `1720px→${layout.hd.lw}px, 8000px→${layout.big.lw}px`);
 
   // Panel Map: two alternating tile colours underneath, and coordinates that
   // must survive the circle crossing them.
@@ -397,11 +413,11 @@ function check(name, ok, detail) {
       return s.getContext('2d').getImageData(0,0,W,H).data;
     }
     var W=1720,H=1032,a=frame(false),b=frame(true),cx=W/2|0,cy=H/2|0;
-    function span(dx,dy){var last=0;
+    function span(dx,dy){
       for(var i=1;i<Math.max(W,H);i++){var x=cx+dx*i,y=cy+dy*i;
         if(x<0||y<0||x>=W||y>=H)break; var o=(y*W+x)*4;
-        if(Math.abs(a[o]-b[o])>40) last=i;}
-      return last;}
+        if(Math.abs(a[o]-b[o])>40) return i;}
+      return 0;}
     var changed=0; for(var i=0;i<a.length;i+=4) if(Math.abs(a[i]-b[i])>40) changed++;
     return {rx:(span(1,0)+span(-1,0))/2, ry:(span(0,-1)+span(0,1))/2, changed:changed};
   }; 1`);
@@ -437,8 +453,9 @@ function check(name, ok, detail) {
         overlay:{type:'none'},readout:{label:false,dims:false},centerLabel:''},0);
       return s.getContext('2d').getImageData(0,0,W,H).data;
     }
-    // B1 sits under the top-left corner circle: count its glyph pixels with and
-    // without the circles — the label must not lose any to the halo.
+    // Find the panel label an arc actually passes through — with the circles
+    // tiled, a fixed panel may sit nowhere near one and the check would pass
+    // while proving nothing.
     // Count the pixels the GLYPH lit, then how many go dark once circles are
     // on. Drawing circles UNDER the text costs only anti-aliased edge pixels
     // (the glyph edge now blends against the halo instead of the tile);
@@ -463,16 +480,26 @@ function check(name, ok, detail) {
       });
       return c.getImageData(0,0,W,H).data;
     })();
+    var best=null, dc2=LED_DISTORTION_CIRCLES({width:W,height:H});
+    for(var pr=0;pr<6;pr++) for(var pc=0;pc<10;pc++){
+      var lx=172*pc+86, ly=172*pr+86;
+      dc2.list.forEach(function(k){
+        var d=Math.abs(Math.hypot(lx-k[0],ly-k[1])-k[2]);
+        if(!best||d<best.d) best={d:d,x:lx,y:ly};
+      });
+    }
     var glyph=0, lost=0, lostIfOnTop=0;
-    for(var y=20;y<150;y++) for(var x=180;x<340;x++){
+    for(var y=best.y-45;y<best.y+45;y++) for(var x=best.x-60;x<best.x+60;x++){
       var o=(y*W+x)*4;
       if(a[o]>200){ glyph++; if(b[o]<=200) lost++; if(over[o]<=200) lostIfOnTop++; }
     }
-    return JSON.stringify({glyph:glyph, lost:lost, lostIfOnTop:lostIfOnTop});})()`));
+    return JSON.stringify({glyph:glyph, lost:lost, lostIfOnTop:lostIfOnTop,
+      panel:Math.round(best.x)+','+Math.round(best.y), arcDist:Math.round(best.d)});})()`));
   check('panel coordinates survive the circle crossing them',
     labelsIntact.glyph > 500 && labelsIntact.lost / labelsIntact.glyph < 0.01
       && labelsIntact.lostIfOnTop > labelsIntact.lost * 20,
-    `B1: ${labelsIntact.glyph} glyph px, ${labelsIntact.lost} lost — ${labelsIntact.lostIfOnTop} would be lost if drawn on top`);
+    `label at ${labelsIntact.panel} (${labelsIntact.arcDist}px from an arc): ${labelsIntact.glyph} glyph px, `
+    + `${labelsIntact.lost} lost — ${labelsIntact.lostIfOnTop} would be lost if drawn on top`);
 
   // ───────────────────────────────────────────── loop export
   section('loop export');

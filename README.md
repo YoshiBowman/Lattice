@@ -75,19 +75,22 @@ git tag v<version> && git push origin main --tags
 - **Overlay pulses** — Resolume-style: a Radar Sweep, Ring Pulse, or Wave Sweep animates
   **over** the active test pattern (adjustable color, opacity, speed, direction), so you
   can watch a pulse travel across panel seams while the mapping pattern stays up.
-- **Distortion circles** — tick it under the Grid or Panel Map pattern for the circularity check
-  every geometry slate carries: one large circle at wall centre, small ones tangent to
-  each corner, and extra circles across the span of a wall much longer than it is tall.
-  A circle is the one shape whose distortion you can't talk yourself out of — a grid
-  stretched 5% on an axis still looks like a grid, while a 5% oval is obvious from the
-  back of the room. If a circle reads as an oval, the image is being scaled: check the
-  processor's input resolution and scaling mode before touching the wall. Circles are
-  haloed so they stay readable over the grid, scale their line weight to the wall, and
-  span output boundaries on a split wall — a circle that steps at the seam means the two
-  feeds don't line up. On Panel Map the halo flips to whichever of black/white contrasts
-  the circle, so it survives any pair of tile colours (including Black / White), and the
-  circles pass behind the panel coordinates rather than striking through them — so one
-  image gives you panel names and a geometry check at the same time.
+- **Distortion circles** — tick it under the Grid or Panel Map pattern for the circularity
+  check a pixel test slate carries: equal circles, each as tall as the wall, tiled tangent
+  across the span. A circle is the one shape whose distortion you can't talk yourself out
+  of — a grid stretched 5% on an axis still looks like a grid, while a 5% oval is obvious
+  from the back of the room. Keeping every circle the same size is the point: one going
+  oval is directly comparable against its neighbours, and a wall four circles long gets
+  checked end to end rather than by one big circle in the middle. The circles at the ends
+  run off the edge, which is where a cropped or misplaced capture window shows itself. If
+  a circle reads as an oval, the image is being scaled: check the processor's input
+  resolution and scaling mode before touching the wall. Circles are haloed so they stay
+  readable over the grid, scale their line weight to the wall, and span output boundaries
+  on a split wall — a circle that steps at the seam means the two feeds don't line up. On
+  Panel Map the halo flips to whichever of black/white contrasts the circle, so it survives
+  any pair of tile colours (including Black / White), and the circles pass behind the panel
+  coordinates rather than striking through them — so one image gives you panel names and a
+  geometry check at the same time.
 - **Patterns** — Solid Color, Color Bars, Grid, Checkerboard, Panel Map (a two-colour checkerboard of
   panels — pick both colours or use a preset pair — with A1…Z9 coordinates and
   per-panel pixel size, the labels auto-contrasting against whichever colour the
