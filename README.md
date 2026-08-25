@@ -84,13 +84,14 @@ git tag v<version> && git push origin main --tags
   checked end to end rather than by one big circle in the middle. The circles at the ends
   run off the edge, which is where a cropped or misplaced capture window shows itself. If
   a circle reads as an oval, the image is being scaled: check the processor's input
-  resolution and scaling mode before touching the wall. Circles are haloed so they stay
-  readable over the grid, scale their line weight to the wall, and span output boundaries
-  on a split wall — a circle that steps at the seam means the two feeds don't line up. On
-  Panel Map the halo flips to whichever of black/white contrasts the circle, so it survives
-  any pair of tile colours (including Black / White), and the circles pass behind the panel
-  coordinates rather than striking through them — so one image gives you panel names and a
-  geometry check at the same time.
+  resolution and scaling mode before touching the wall. **Circle thickness** is yours to
+  set (1–16 px, default a 2 px hairline) — they are drawn as a plain line in the pattern's
+  foreground colour, with no outline. They span output boundaries on a split wall, so a
+  circle that steps at the seam means the two feeds don't line up. On Panel Map the circles
+  pass behind the panel coordinates rather than striking through them, so one image gives
+  you panel names and a geometry check at the same time; on a Black / White panel pair a
+  white circle disappears against the white tiles exactly as the white seam lines do —
+  pick a foreground colour that contrasts both.
 - **Patterns** — Solid Color, Color Bars, Grid, Checkerboard, Panel Map (a two-colour checkerboard of
   panels — pick both colours or use a preset pair — with A1…Z9 coordinates and
   per-panel pixel size, the labels auto-contrasting against whichever colour the

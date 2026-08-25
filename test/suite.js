@@ -320,55 +320,90 @@ function check(name, ok, detail) {
 
   // ───────────────────────────────────────────── distortion circles
   section('distortion circles');
-  // Measured by diffing a render with circles against one without, so grid
-  // lines and the wall border can never be mistaken for a circle.
-  await evalIn(page, `window.__circDiff = function(W,H,FW,FH){
+  // Measure the arc itself: sample the radius at many angles rather than
+  // scanning the horizontal and vertical from centre. Those two rays are
+  // exactly where the arc crosses a panel seam and the wall border, and a
+  // white circle over a white seam leaves no trace to find — which made the
+  // earlier ray version report rx=0, ry=0 and "pass" on 0 === 0.
+  await evalIn(page, `window.__circArc = function(o){
+    var W=o.W, H=o.H, FW=o.FW||W, FH=o.FH||H;
     function frame(on){
       var wall={id:'m',name:'M',width:W,height:H,mode:'uniform',defineBy:'px',
         panelW:172,panelH:172,panelsX:Math.round(W/172),panelsY:Math.round(H/172)};
       var s=document.createElement('canvas'); s.width=W; s.height=H;
       LED_CREATE_FRAME_RENDERER()(s.getContext('2d'),{wall:wall,
-        pattern:{...cfg.pattern,type:'grid',fg:'#ffffff',bg:'#000000',size:16,circles:on},
+        pattern:{...cfg.pattern,type:o.type||'grid',fg:o.fg||'#ffffff',bg:'#000000',
+          size:16,panelA:o.A||'#101010',panelB:o.B||'#303030',circles:on,circleWidth:o.lw||2},
         overlay:{type:'none'},readout:{label:false,dims:false},centerLabel:''},0);
-      var o=document.createElement('canvas'); o.width=FW||W; o.height=FH||H;
-      var c=o.getContext('2d'); c.imageSmoothingEnabled=true;
-      c.drawImage(s,0,0,W,H,0,0,o.width,o.height);
-      return c.getImageData(0,0,o.width,o.height).data;
+      var out=document.createElement('canvas'); out.width=FW; out.height=FH;
+      var c=out.getContext('2d'); c.imageSmoothingEnabled=true;
+      c.drawImage(s,0,0,W,H,0,0,FW,FH);
+      return c.getImageData(0,0,FW,FH).data;
     }
-    var fw=FW||W, fh=FH||H, a=frame(false), b=frame(true);
-    var cx=Math.floor(fw/2), cy=Math.floor(fh/2);
-    // first changed pixel, not the furthest: the circles tile, so a ray leaving
-    // the centre crosses neighbours as well as the circle we want to measure
-    function span(dx,dy){
-      for(var i=1;i<Math.max(fw,fh);i++){var x=cx+dx*i,y=cy+dy*i;
-        if(x<0||y<0||x>=fw||y>=fh)break; var o=(y*fw+x)*4;
-        if(Math.abs(a[o]-b[o])>40) return i;}
-      return 0;}
-    var changed=0; for(var i=0;i<a.length;i+=4) if(Math.abs(a[i]-b[i])>40) changed++;
-    return {rx:(span(1,0)+span(-1,0))/2, ry:(span(0,-1)+span(0,1))/2,
-      l:span(-1,0), r:span(1,0), u:span(0,-1), d:span(0,1), changed:changed};
+    var a=frame(false), b=frame(true);
+    var cx=FW/2, cy=FH/2, nom=Math.min(FW,FH)/2;
+    // A tight band around the expected radius. Open it wider and a hidden arc
+    // (where the circle crosses a same-coloured seam, or a white circle sits on
+    // a white tile) lets the search run on and lock onto the NEIGHBOURING
+    // circle. +/-10% still admits the stretched cases measured here.
+    var lo=Math.round(nom*0.9), hi=Math.round(nom*1.1);
+    var rs=[], ax=0, ay=0, byAngle={}, hits=[];
+    for(var deg=0; deg<360; deg+=2){
+      var t=deg*Math.PI/180, ct=Math.cos(t), st=Math.sin(t);
+      for(var i=lo;i<=hi;i++){
+        var x=Math.round(cx+ct*i), y=Math.round(cy+st*i);
+        if(x<0||y<0||x>=FW||y>=FH) break;
+        var q=(y*FW+x)*4;
+        if(Math.abs(a[q]-b[q])>40 || Math.abs(a[q+1]-b[q+1])>40 || Math.abs(a[q+2]-b[q+2])>40){
+          rs.push(i); byAngle[deg]=i; hits.push([ct,st,i]);
+          break;
+        }
+      }
+    }
+    // opposite pairs should match if the circle is centred
+    var offc=0;
+    for(var d=0; d<180; d+=2){
+      if(byAngle[d]!=null && byAngle[d+180]!=null) offc=Math.max(offc, Math.abs(byAngle[d]-byAngle[d+180]));
+    }
+    // Where the circle is invisible (crossing a same-coloured seam, or a white
+    // circle on a white tile) the search can run past it and lock onto the
+    // NEIGHBOURING circle. Drop samples far from the median: a stretched circle
+    // is at most a few percent off, a wrong circle is tens of percent off.
+    var sorted=rs.slice().sort(function(p,q){return p-q;});
+    var med=sorted[Math.floor(sorted.length/2)];
+    var keep=rs.filter(function(v){return Math.abs(v-med)/med <= 0.15;});
+    hits.forEach(function(k){
+      if(Math.abs(k[2]-med)/med > 0.15) return;
+      ax=Math.max(ax, Math.abs(k[0]*k[2])); ay=Math.max(ay, Math.abs(k[1]*k[2]));
+    });
+    return {n:keep.length, raw:rs.length, rejected:rs.length-keep.length,
+      min:Math.min.apply(null,keep), max:Math.max.apply(null,keep),
+      ax:Math.round(ax), ay:Math.round(ay), offCentre:offc};
   }; 1`);
 
-  const circ = JSON.parse(await evalIn(page, `JSON.stringify(window.__circDiff(1720,1032))`));
-  check('the centre circle is geometrically round', Math.abs(circ.rx - circ.ry) <= 2,
-    `rx=${circ.rx} ry=${circ.ry}`);
-  check('it is centred and spans the short axis',
-    Math.abs(circ.l - circ.r) <= 2 && Math.abs(circ.u - circ.d) <= 2 && Math.abs(circ.ry - 513) < 8,
-    `L${circ.l} R${circ.r} U${circ.u} D${circ.d}`);
+  const arc = JSON.parse(await evalIn(page, `JSON.stringify(window.__circArc({W:1720,H:1032}))`));
+  check('the arc is found all the way round', arc.n > 150, `${arc.n} of 180 angles sampled`);
+  check('the centre circle is geometrically round',
+    arc.n > 150 && arc.max - arc.min <= 3, `radius ${arc.min}–${arc.max}px over 360°`);
+  check('it is centred', arc.offCentre <= 2, `opposite radii differ by ${arc.offCentre}px`);
+  check('it spans the short axis', Math.abs(arc.ay - 516) <= 3, `vertical radius ${arc.ay} of 516`);
+
+  const arcPortrait = JSON.parse(await evalIn(page, `JSON.stringify(window.__circArc({W:1032,H:1720}))`));
+  check('round on a portrait wall too',
+    arcPortrait.n > 150 && arcPortrait.max - arcPortrait.min <= 3,
+    `radius ${arcPortrait.min}–${arcPortrait.max}px`);
+
+  // the whole point: a wall pushed through a frame of the wrong shape
+  const arcStretch = JSON.parse(await evalIn(page,
+    `JSON.stringify(window.__circArc({W:1720,H:1032,FW:1920,FH:1080}))`));
+  const outOfRound = Math.abs(arcStretch.ax / arcStretch.ay - 1) * 100;
+  check('a stretched frame reads as an oval', arcStretch.n > 150 && outOfRound > 5,
+    `semi-axes ${arcStretch.ax} x ${arcStretch.ay} — ${outOfRound.toFixed(1)}% out of round`);
 
   const circDefault = JSON.parse(await evalIn(page,
     `JSON.stringify({def: DEFAULTS.pattern.circles === true, param: LED_PATTERNS.grid.params.indexOf('circles') >= 0})`));
   check('off by default, and offered on the Grid pattern',
     circDefault.def === false && circDefault.param === true, JSON.stringify(circDefault));
-
-  const portrait = JSON.parse(await evalIn(page, `JSON.stringify(window.__circDiff(1032,1720))`));
-  check('round on a portrait wall too', Math.abs(portrait.rx - portrait.ry) <= 2,
-    `rx=${portrait.rx} ry=${portrait.ry}`);
-
-  // the whole point: a wall pushed through a frame of the wrong shape
-  const stretched = JSON.parse(await evalIn(page, `JSON.stringify(window.__circDiff(1720,1032,1920,1080))`));
-  const outOfRound = Math.abs(stretched.rx / stretched.ry - 1) * 100;
-  check('a stretched frame reads as an oval', outOfRound > 5, `${outOfRound.toFixed(1)}% out of round`);
 
   const layout = JSON.parse(await evalIn(page, `(function(){
     function lay(W,H){var d=LED_DISTORTION_CIRCLES({width:W,height:H});
@@ -396,52 +431,94 @@ function check(name, ok, detail) {
     layout.port.cx.every((x) => x === 258) && new Set(layout.port.cy).size === layout.port.n,
     `${layout.port.n} circles down the wall`);
   check('a long wall is covered end to end', layout.wide.n >= 8, `8:1 wall = ${layout.wide.n} circles`);
-  check('line weight scales with the wall', layout.big.lw > layout.hd.lw,
-    `1720px→${layout.hd.lw}px, 8000px→${layout.big.lw}px`);
+  const thick = JSON.parse(await evalIn(page, `JSON.stringify({
+    def: DEFAULTS.pattern.circleWidth,
+    one: LED_DISTORTION_CIRCLES({width:1720,height:1032},1).lw,
+    six: LED_DISTORTION_CIRCLES({width:1720,height:1032},6).lw,
+    lo:  LED_DISTORTION_CIRCLES({width:1720,height:1032},0).lw,
+    hi:  LED_DISTORTION_CIRCLES({width:1720,height:1032},99).lw,
+    unset: LED_DISTORTION_CIRCLES({width:8000,height:4000}).lw,
+    onGrid: LED_PATTERNS.grid.params.indexOf('circleWidth') >= 0,
+    onPM: LED_PATTERNS.panelmap.params.indexOf('circleWidth') >= 0 })`));
+  check('thickness is exactly what you set', thick.one === 1 && thick.six === 6,
+    `1→${thick.one}px, 6→${thick.six}px`);
+  check('thickness is clamped to a usable range', thick.lo === 1 && thick.hi === 16,
+    `0→${thick.lo}, 99→${thick.hi}`);
+  check('thickness no longer scales itself with the wall',
+    thick.unset === 2 && thick.def === 2, `8000px wall → ${thick.unset}px`);
+  check('the thickness control is offered on both patterns', thick.onGrid && thick.onPM);
 
-  // Panel Map: two alternating tile colours underneath, and coordinates that
-  // must survive the circle crossing them.
-  await evalIn(page, `window.__circPM = function(A,B){
-    function frame(on){
-      var W=1720,H=1032;
-      var wall={id:'m',name:'M',width:W,height:H,mode:'uniform',defineBy:'px',
-        panelW:172,panelH:172,panelsX:10,panelsY:6};
+  // the slider is meaningless until the circles are on
+  const sliderVis = JSON.parse(await evalIn(page, `(function(){
+    var saved={type:cfg.pattern.type, on:cfg.pattern.circles};
+    cfg.pattern.type='grid'; cfg.pattern.circles=false; syncPatternUI();
+    var off=document.querySelector('.param[data-param="circleWidth"]').classList.contains('visible');
+    cfg.pattern.circles=true; syncPatternUI();
+    var on=document.querySelector('.param[data-param="circleWidth"]').classList.contains('visible');
+    cfg.pattern.type=saved.type; cfg.pattern.circles=saved.on; syncPatternUI();
+    return JSON.stringify({off:off,on:on});})()`));
+  check('the thickness slider appears only when circles are on',
+    sliderVis.off === false && sliderVis.on === true, JSON.stringify(sliderVis));
+
+  // no outline: crossing an arc must pass through ONE band, not a sandwich
+  const bands = JSON.parse(await evalIn(page, `(function(){
+    var W=1720,H=1032;
+    var wall={id:'m',name:'M',width:W,height:H,mode:'uniform',defineBy:'px',
+      panelW:172,panelH:172,panelsX:10,panelsY:6};
+    function frame(on,lwSet){
       var s=document.createElement('canvas'); s.width=W; s.height=H;
       LED_CREATE_FRAME_RENDERER()(s.getContext('2d'),{wall:wall,
-        pattern:{...cfg.pattern,type:'panelmap',fg:'#ffffff',panelA:A,panelB:B,circles:on},
+        pattern:{...cfg.pattern,type:'grid',bg:'#000000',fg:'#ffffff',size:16,circles:on,circleWidth:lwSet},
         overlay:{type:'none'},readout:{label:false,dims:false},centerLabel:''},0);
       return s.getContext('2d').getImageData(0,0,W,H).data;
     }
-    var W=1720,H=1032,a=frame(false),b=frame(true),cx=W/2|0,cy=H/2|0;
-    function span(dx,dy){
-      for(var i=1;i<Math.max(W,H);i++){var x=cx+dx*i,y=cy+dy*i;
-        if(x<0||y<0||x>=W||y>=H)break; var o=(y*W+x)*4;
-        if(Math.abs(a[o]-b[o])>40) return i;}
-      return 0;}
-    var changed=0; for(var i=0;i<a.length;i+=4) if(Math.abs(a[i]-b[i])>40) changed++;
-    return {rx:(span(1,0)+span(-1,0))/2, ry:(span(0,-1)+span(0,1))/2, changed:changed};
-  }; 1`);
+    // diff isolates the stroke; walk out at 45 degrees, perpendicular to the
+    // arc there and clear of the tangent points where two strokes coincide
+    function runs(lwSet){
+      var a=frame(false,lwSet), b=frame(true,lwSet), out=[], cur=0, k=Math.SQRT1_2;
+      for(var i=1;i<700;i++){
+        var x=Math.round(860+i*k), y=Math.round(516-i*k);
+        if(x<0||y<0||x>=W||y>=H) break;
+        var o=(y*W+x)*4;
+        if(Math.abs(a[o]-b[o])>40) cur++; else if(cur){out.push(cur); cur=0;}
+      }
+      if(cur) out.push(cur);
+      return out;
+    }
+    return JSON.stringify({thin:runs(1), thick:runs(8)});})()`));
+  check('the circle is a single line, not an outlined band',
+    bands.thin.length === 1 && bands.thick.length === 1, JSON.stringify(bands));
+  check('the line measures what was asked for',
+    bands.thin[0] <= 3 && bands.thick[0] >= 6 && bands.thick[0] <= 11,
+    `1px set → ${bands.thin[0]}px, 8px set → ${bands.thick[0]}px`);
 
+  // Panel Map: two alternating tile colours underneath, and coordinates that
+  // must survive the circle crossing them.
   const pmOffered = JSON.parse(await evalIn(page,
     `JSON.stringify(LED_PATTERNS.panelmap.params.indexOf('circles') >= 0)`));
   check('offered on Panel Map too', pmOffered === true);
 
-  const pmGrey = JSON.parse(await evalIn(page, `JSON.stringify(window.__circPM('#101010','#303030'))`));
-  check('round over the panel tiles', Math.abs(pmGrey.rx - pmGrey.ry) <= 2 && pmGrey.changed > 10000,
-    `rx=${pmGrey.rx} ry=${pmGrey.ry}, ${pmGrey.changed} px`);
+  const pmArc = JSON.parse(await evalIn(page,
+    `JSON.stringify(window.__circArc({W:1720,H:1032,type:'panelmap'}))`));
+  check('round over the panel tiles', pmArc.n > 150 && pmArc.max - pmArc.min <= 5,
+    `radius ${pmArc.min}–${pmArc.max}px over ${pmArc.n} angles`);
 
-  const pmBW = JSON.parse(await evalIn(page, `JSON.stringify(window.__circPM('#000000','#ffffff'))`));
-  check('legible on Black / White panels, where a plain white circle would vanish',
-    pmBW.changed > 10000 && Math.abs(pmBW.rx - pmBW.ry) <= 2, `${pmBW.changed} px changed`);
+  // The honest limit of dropping the outline: the circle is drawn in the
+  // pattern's foreground colour and nothing else, so on a Black / White panel
+  // pair it shows on the black tiles and vanishes on the white ones — exactly
+  // as the white seam lines already do. Documented here rather than papered
+  // over; picking a foreground colour that contrasts both tiles fixes it.
+  const pmBW = JSON.parse(await evalIn(page,
+    `JSON.stringify(window.__circArc({W:1720,H:1032,type:'panelmap',A:'#000000',B:'#ffffff'}))`));
+  check('on a Black / White pair the circle shows on the dark tiles only',
+    pmBW.raw > 40 && pmBW.raw < pmArc.raw * 0.85,
+    `${pmBW.raw} of 180 angles visible, against ${pmArc.raw} on the grey pair`);
+  const pmRed = JSON.parse(await evalIn(page,
+    `JSON.stringify(window.__circArc({W:1720,H:1032,type:'panelmap',A:'#000000',B:'#ffffff',fg:'#ff0000'}))`));
+  check('a contrasting foreground restores it across both tiles, and it is round',
+    pmRed.raw > pmBW.raw * 1.5 && pmRed.max - pmRed.min <= 5,
+    `${pmRed.raw} angles visible, radius ${pmRed.min}–${pmRed.max}px`);
 
-  const ink = JSON.parse(await evalIn(page, `JSON.stringify({
-    pmW: LED_CIRCLE_INK({type:'panelmap',fg:'#ffffff'}).halo,
-    pmB: LED_CIRCLE_INK({type:'panelmap',fg:'#000000'}).halo,
-    grid: LED_CIRCLE_INK({type:'grid',fg:'#ffffff',bg:'#000000'}).halo })`));
-  check('the halo contrasts the ink on Panel Map, and stays the background on Grid',
-    ink.pmW === '#000000' && ink.pmB === '#ffffff' && ink.grid === '#000000', JSON.stringify(ink));
-
-  // the coordinates are the point of Panel Map — the circle must pass behind them
   const labelsIntact = JSON.parse(await evalIn(page, `(function(){
     function px(on){
       var W=1720,H=1032;
@@ -449,7 +526,7 @@ function check(name, ok, detail) {
         panelW:172,panelH:172,panelsX:10,panelsY:6};
       var s=document.createElement('canvas'); s.width=W; s.height=H;
       LED_CREATE_FRAME_RENDERER()(s.getContext('2d'),{wall:wall,
-        pattern:{...cfg.pattern,type:'panelmap',fg:'#ffffff',panelA:'#101010',panelB:'#303030',circles:on},
+        pattern:{...cfg.pattern,type:'panelmap',fg:'#ff0000',panelA:'#101010',panelB:'#303030',circles:on},
         overlay:{type:'none'},readout:{label:false,dims:false},centerLabel:''},0);
       return s.getContext('2d').getImageData(0,0,W,H).data;
     }
@@ -458,7 +535,7 @@ function check(name, ok, detail) {
     // while proving nothing.
     // Count the pixels the GLYPH lit, then how many go dark once circles are
     // on. Drawing circles UNDER the text costs only anti-aliased edge pixels
-    // (the glyph edge now blends against the halo instead of the tile);
+    // (the glyph edge now blends against the circle instead of the tile);
     // drawing them OVER it punches the stroke straight through. The on-top
     // case is rendered here so the threshold is calibrated, not guessed.
     var W=1720,H=1032;
@@ -469,15 +546,11 @@ function check(name, ok, detail) {
       var s=document.createElement('canvas'); s.width=W; s.height=H;
       var c=s.getContext('2d');
       LED_CREATE_FRAME_RENDERER()(c,{wall:wall,
-        pattern:{...cfg.pattern,type:'panelmap',fg:'#ffffff',panelA:'#101010',panelB:'#303030',circles:false},
+        pattern:{...cfg.pattern,type:'panelmap',fg:'#ff0000',panelA:'#101010',panelB:'#303030',circles:false},
         overlay:{type:'none'},readout:{label:false,dims:false},centerLabel:''},0);
-      var ci=LED_CIRCLE_INK({type:'panelmap',fg:'#ffffff'});
-      var dc=LED_DISTORTION_CIRCLES(wall);
-      c.lineJoin='round';
-      [[ci.halo,dc.lw+4],[ci.ink,dc.lw]].forEach(function(pass){
-        c.strokeStyle=pass[0]; c.lineWidth=pass[1];
-        dc.list.forEach(function(k){c.beginPath();c.arc(k[0],k[1],k[2],0,Math.PI*2);c.stroke();});
-      });
+      var dc=LED_DISTORTION_CIRCLES(wall, cfg.pattern.circleWidth);
+      c.strokeStyle='#ff0000'; c.lineWidth=dc.lw; c.lineJoin='round';
+      dc.list.forEach(function(k){c.beginPath();c.arc(k[0],k[1],k[2],0,Math.PI*2);c.stroke();});
       return c.getImageData(0,0,W,H).data;
     })();
     var best=null, dc2=LED_DISTORTION_CIRCLES({width:W,height:H});
@@ -491,7 +564,9 @@ function check(name, ok, detail) {
     var glyph=0, lost=0, lostIfOnTop=0;
     for(var y=best.y-45;y<best.y+45;y++) for(var x=best.x-60;x<best.x+60;x++){
       var o=(y*W+x)*4;
-      if(a[o]>200){ glyph++; if(b[o]<=200) lost++; if(over[o]<=200) lostIfOnTop++; }
+      // green channel: the coordinate glyph is white, the circle is red, so a
+      // glyph pixel the circle painted over drops from 255 to 0 here
+      if(a[o+1]>200){ glyph++; if(b[o+1]<=200) lost++; if(over[o+1]<=200) lostIfOnTop++; }
     }
     return JSON.stringify({glyph:glyph, lost:lost, lostIfOnTop:lostIfOnTop,
       panel:Math.round(best.x)+','+Math.round(best.y), arcDist:Math.round(best.d)});})()`));

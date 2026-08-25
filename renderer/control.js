@@ -54,7 +54,7 @@ const DEFAULTS = {
   wallColorMode: 'same', // 'same' | 'perWall'
   pattern: {
     type: 'grid', fg: '#ffffff', bg: '#000000', size: 16, speed: 2, gradMode: 'gray-h', dir: 'h',
-    circles: false, // aspect-ratio circles over the grid — an oval means something is scaling
+    circles: false, circleWidth: 2, // aspect-ratio circles — an oval means something is scaling
     panelA: '#101010', panelB: '#303030', // Panel Map's two alternating colours
   },
   overlay: { type: 'none', color: '#3fb950', opacity: 70, speed: 1, dir: 'h' },
@@ -201,20 +201,32 @@ function renderWalls() {
       }
     });
 
+    // Two lines, because one could not hold swatch + name + dims + three
+    // buttons on a narrow column — and it was the name that got squeezed to
+    // nothing. The name gets a line to itself since that is what a wall is
+    // identified by; the dimensions share the second line with the buttons.
+    const top = document.createElement('div');
+    top.className = 'wtop';
+
     if (cfg.wallColorMode === 'perWall') {
       const sw = document.createElement('div');
       sw.className = 'wswatch';
       sw.style.background = w.color || '#3fa9f5';
-      row.appendChild(sw);
+      top.appendChild(sw);
     }
 
     const name = document.createElement('div');
     name.className = 'wname';
     name.textContent = w.name;
 
+    top.appendChild(name);
+
+    const bottom = document.createElement('div');
+    bottom.className = 'wbot';
     const res = document.createElement('div');
     res.className = 'wres';
     res.textContent = wallSummaryText(w);
+    bottom.appendChild(res);
 
     const ctl = document.createElement('div');
     ctl.className = 'wctl';
@@ -257,7 +269,8 @@ function renderWalls() {
       ctl.appendChild(rmBtn);
     }
 
-    row.append(name, res, ctl);
+    bottom.appendChild(ctl);
+    row.append(top, bottom);
     box.appendChild(row);
   });
 }
@@ -621,7 +634,9 @@ function syncPatternUI() {
     b.classList.toggle('active', b.dataset.pattern === cfg.pattern.type);
   });
   document.querySelectorAll('.param').forEach((el) => {
-    el.classList.toggle('visible', p.params.includes(el.dataset.param));
+    const on = p.params.includes(el.dataset.param)
+      && (el.dataset.param !== 'circleWidth' || !!cfg.pattern.circles);
+    el.classList.toggle('visible', on);
   });
   $('#sizeVal').textContent = `${cfg.pattern.size}px`;
   $('#speedVal').textContent = `${cfg.pattern.speed}×`;
@@ -1888,6 +1903,8 @@ function syncContentUI() {
   $('#gradMode').value = cfg.pattern.gradMode;
   $('#dir').value = cfg.pattern.dir || 'h';
   $('#patCircles').checked = !!cfg.pattern.circles;
+  $('#circleWidth').value = cfg.pattern.circleWidth;
+  $('#circleWidthVal').textContent = `${cfg.pattern.circleWidth}px`;
   $('#ovColor').value = cfg.overlay.color;
   $('#ovOpacity').value = cfg.overlay.opacity;
   $('#ovOpacityVal').textContent = `${cfg.overlay.opacity}%`;
@@ -2411,7 +2428,20 @@ function wireInputs() {
 
   const patCircles = $('#patCircles');
   patCircles.checked = !!cfg.pattern.circles;
-  patCircles.addEventListener('change', () => { cfg.pattern.circles = patCircles.checked; push(); });
+  patCircles.addEventListener('change', () => {
+    cfg.pattern.circles = patCircles.checked;
+    syncPatternUI();   // reveals or hides the thickness slider
+    push();
+  });
+
+  const circleWidth = $('#circleWidth');
+  circleWidth.value = cfg.pattern.circleWidth;
+  $('#circleWidthVal').textContent = `${cfg.pattern.circleWidth}px`;
+  circleWidth.addEventListener('input', () => {
+    cfg.pattern.circleWidth = circleWidth.value | 0;
+    $('#circleWidthVal').textContent = `${cfg.pattern.circleWidth}px`;
+    push();
+  });
 
   const gradMode = $('#gradMode');
   gradMode.value = cfg.pattern.gradMode;

@@ -163,13 +163,13 @@
   // circles long gets checked end to end instead of by one big circle in the
   // middle. The ones at the ends run off the edge, which is exactly where a
   // cropped or misplaced capture window shows itself.
-  function distortionCircles(wall) {
+  function distortionCircles(wall, lineWidth) {
     const w = wall.width, h = wall.height;
     const short = Math.min(w, h);
     const horiz = w >= h;
     const long = horiz ? w : h;
     const r = short / 2;               // tangent to both long edges
-    const lw = Math.max(2, Math.round(short / 500));
+    const lw = Math.max(1, Math.min(16, lineWidth == null ? 2 : lineWidth | 0));
     const n = Math.ceil((long / 2 - r) / short);   // how many each side of centre
     const list = [];
     for (let i = -n; i <= n; i++) {
@@ -179,31 +179,16 @@
     return { lw, list };
   }
 
-  // The halo clears a band around the circle so it reads over whatever it
-  // crosses. It wants to sit close to the local background — on a pattern with
-  // one background that IS the background; on Panel Map, where two tile colours
-  // alternate underneath, the only always-legible choice is the black or white
-  // that contrasts the ink (the same call Panel Map makes for its coordinates).
-  function circleInk(pattern) {
-    const ink = pattern.fg || '#ffffff';
-    return pattern.type === 'panelmap'
-      ? { ink, halo: readableOn(ink) }
-      : { ink, halo: pattern.bg || '#000000' };
-  }
-
   function drawDistortionCircles(ctx, cfg) {
     if (!cfg.pattern.circles) return;
-    const { lw, list } = distortionCircles(cfg.wall);
-    const { ink, halo } = circleInk(cfg.pattern);
+    const { lw, list } = distortionCircles(cfg.wall, cfg.pattern.circleWidth);
+    ctx.strokeStyle = cfg.pattern.fg;
+    ctx.lineWidth = lw;
     ctx.lineJoin = 'round';
-    for (const pass of [[halo, lw + 4], [ink, lw]]) {
-      ctx.strokeStyle = pass[0];
-      ctx.lineWidth = pass[1];
-      for (const c of list) {
-        ctx.beginPath();
-        ctx.arc(c[0], c[1], c[2], 0, Math.PI * 2);
-        ctx.stroke();
-      }
+    for (const c of list) {
+      ctx.beginPath();
+      ctx.arc(c[0], c[1], c[2], 0, Math.PI * 2);
+      ctx.stroke();
     }
   }
 
@@ -231,7 +216,7 @@
 
     grid: {
       name: 'Grid',
-      params: ['fg', 'bg', 'size', 'circles'],
+      params: ['fg', 'bg', 'size', 'circles', 'circleWidth'],
       draw(ctx, cfg) {
         // Panel-aware: bright lines on every panel seam; the fine sub-grid
         // restarts at each panel's origin so every panel looks identical
@@ -284,7 +269,7 @@
 
     panelmap: {
       name: 'Panel Map',
-      params: ['panelA', 'panelB', 'fg', 'circles'],
+      params: ['panelA', 'panelB', 'fg', 'circles', 'circleWidth'],
       draw(ctx, cfg) {
         const { width: w, height: h } = cfg.wall;
         const g = wallGrid(cfg.wall);
@@ -1242,7 +1227,6 @@
   window.LED_FRAME_ANIMATED = frameAnimated;
   window.LED_WALL_GRID = wallGrid;
   window.LED_DISTORTION_CIRCLES = distortionCircles;
-  window.LED_CIRCLE_INK = circleInk;
   window.LED_COL_LETTER = colLetter;
   window.LED_WALL_SEGMENTS = wallSegments;
   window.LED_WALL_IS_SPLIT = wallIsSplit;
