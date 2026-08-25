@@ -383,6 +383,97 @@ function check(name, ok, detail) {
     `1720px→${layout.lw}px, 8000px→${layout.lwBig}px`);
   check('every circle sits inside the wall', layout.inside === true);
 
+  // Panel Map: two alternating tile colours underneath, and coordinates that
+  // must survive the circle crossing them.
+  await evalIn(page, `window.__circPM = function(A,B){
+    function frame(on){
+      var W=1720,H=1032;
+      var wall={id:'m',name:'M',width:W,height:H,mode:'uniform',defineBy:'px',
+        panelW:172,panelH:172,panelsX:10,panelsY:6};
+      var s=document.createElement('canvas'); s.width=W; s.height=H;
+      LED_CREATE_FRAME_RENDERER()(s.getContext('2d'),{wall:wall,
+        pattern:{...cfg.pattern,type:'panelmap',fg:'#ffffff',panelA:A,panelB:B,circles:on},
+        overlay:{type:'none'},readout:{label:false,dims:false},centerLabel:''},0);
+      return s.getContext('2d').getImageData(0,0,W,H).data;
+    }
+    var W=1720,H=1032,a=frame(false),b=frame(true),cx=W/2|0,cy=H/2|0;
+    function span(dx,dy){var last=0;
+      for(var i=1;i<Math.max(W,H);i++){var x=cx+dx*i,y=cy+dy*i;
+        if(x<0||y<0||x>=W||y>=H)break; var o=(y*W+x)*4;
+        if(Math.abs(a[o]-b[o])>40) last=i;}
+      return last;}
+    var changed=0; for(var i=0;i<a.length;i+=4) if(Math.abs(a[i]-b[i])>40) changed++;
+    return {rx:(span(1,0)+span(-1,0))/2, ry:(span(0,-1)+span(0,1))/2, changed:changed};
+  }; 1`);
+
+  const pmOffered = JSON.parse(await evalIn(page,
+    `JSON.stringify(LED_PATTERNS.panelmap.params.indexOf('circles') >= 0)`));
+  check('offered on Panel Map too', pmOffered === true);
+
+  const pmGrey = JSON.parse(await evalIn(page, `JSON.stringify(window.__circPM('#101010','#303030'))`));
+  check('round over the panel tiles', Math.abs(pmGrey.rx - pmGrey.ry) <= 2 && pmGrey.changed > 10000,
+    `rx=${pmGrey.rx} ry=${pmGrey.ry}, ${pmGrey.changed} px`);
+
+  const pmBW = JSON.parse(await evalIn(page, `JSON.stringify(window.__circPM('#000000','#ffffff'))`));
+  check('legible on Black / White panels, where a plain white circle would vanish',
+    pmBW.changed > 10000 && Math.abs(pmBW.rx - pmBW.ry) <= 2, `${pmBW.changed} px changed`);
+
+  const ink = JSON.parse(await evalIn(page, `JSON.stringify({
+    pmW: LED_CIRCLE_INK({type:'panelmap',fg:'#ffffff'}).halo,
+    pmB: LED_CIRCLE_INK({type:'panelmap',fg:'#000000'}).halo,
+    grid: LED_CIRCLE_INK({type:'grid',fg:'#ffffff',bg:'#000000'}).halo })`));
+  check('the halo contrasts the ink on Panel Map, and stays the background on Grid',
+    ink.pmW === '#000000' && ink.pmB === '#ffffff' && ink.grid === '#000000', JSON.stringify(ink));
+
+  // the coordinates are the point of Panel Map — the circle must pass behind them
+  const labelsIntact = JSON.parse(await evalIn(page, `(function(){
+    function px(on){
+      var W=1720,H=1032;
+      var wall={id:'m',name:'M',width:W,height:H,mode:'uniform',defineBy:'px',
+        panelW:172,panelH:172,panelsX:10,panelsY:6};
+      var s=document.createElement('canvas'); s.width=W; s.height=H;
+      LED_CREATE_FRAME_RENDERER()(s.getContext('2d'),{wall:wall,
+        pattern:{...cfg.pattern,type:'panelmap',fg:'#ffffff',panelA:'#101010',panelB:'#303030',circles:on},
+        overlay:{type:'none'},readout:{label:false,dims:false},centerLabel:''},0);
+      return s.getContext('2d').getImageData(0,0,W,H).data;
+    }
+    // B1 sits under the top-left corner circle: count its glyph pixels with and
+    // without the circles — the label must not lose any to the halo.
+    // Count the pixels the GLYPH lit, then how many go dark once circles are
+    // on. Drawing circles UNDER the text costs only anti-aliased edge pixels
+    // (the glyph edge now blends against the halo instead of the tile);
+    // drawing them OVER it punches the stroke straight through. The on-top
+    // case is rendered here so the threshold is calibrated, not guessed.
+    var W=1720,H=1032;
+    var a=px(false), b=px(true);
+    var over=(function(){
+      var wall={id:'m',name:'M',width:W,height:H,mode:'uniform',defineBy:'px',
+        panelW:172,panelH:172,panelsX:10,panelsY:6};
+      var s=document.createElement('canvas'); s.width=W; s.height=H;
+      var c=s.getContext('2d');
+      LED_CREATE_FRAME_RENDERER()(c,{wall:wall,
+        pattern:{...cfg.pattern,type:'panelmap',fg:'#ffffff',panelA:'#101010',panelB:'#303030',circles:false},
+        overlay:{type:'none'},readout:{label:false,dims:false},centerLabel:''},0);
+      var ci=LED_CIRCLE_INK({type:'panelmap',fg:'#ffffff'});
+      var dc=LED_DISTORTION_CIRCLES(wall);
+      c.lineJoin='round';
+      [[ci.halo,dc.lw+4],[ci.ink,dc.lw]].forEach(function(pass){
+        c.strokeStyle=pass[0]; c.lineWidth=pass[1];
+        dc.list.forEach(function(k){c.beginPath();c.arc(k[0],k[1],k[2],0,Math.PI*2);c.stroke();});
+      });
+      return c.getImageData(0,0,W,H).data;
+    })();
+    var glyph=0, lost=0, lostIfOnTop=0;
+    for(var y=20;y<150;y++) for(var x=180;x<340;x++){
+      var o=(y*W+x)*4;
+      if(a[o]>200){ glyph++; if(b[o]<=200) lost++; if(over[o]<=200) lostIfOnTop++; }
+    }
+    return JSON.stringify({glyph:glyph, lost:lost, lostIfOnTop:lostIfOnTop});})()`));
+  check('panel coordinates survive the circle crossing them',
+    labelsIntact.glyph > 500 && labelsIntact.lost / labelsIntact.glyph < 0.01
+      && labelsIntact.lostIfOnTop > labelsIntact.lost * 20,
+    `B1: ${labelsIntact.glyph} glyph px, ${labelsIntact.lost} lost — ${labelsIntact.lostIfOnTop} would be lost if drawn on top`);
+
   // ───────────────────────────────────────────── loop export
   section('loop export');
   const periods = JSON.parse(await evalIn(page, `(function(){

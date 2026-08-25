@@ -186,13 +186,24 @@
     return { lw, list };
   }
 
+  // The halo clears a band around the circle so it reads over whatever it
+  // crosses. It wants to sit close to the local background — on a pattern with
+  // one background that IS the background; on Panel Map, where two tile colours
+  // alternate underneath, the only always-legible choice is the black or white
+  // that contrasts the ink (the same call Panel Map makes for its coordinates).
+  function circleInk(pattern) {
+    const ink = pattern.fg || '#ffffff';
+    return pattern.type === 'panelmap'
+      ? { ink, halo: readableOn(ink) }
+      : { ink, halo: pattern.bg || '#000000' };
+  }
+
   function drawDistortionCircles(ctx, cfg) {
     if (!cfg.pattern.circles) return;
     const { lw, list } = distortionCircles(cfg.wall);
+    const { ink, halo } = circleInk(cfg.pattern);
     ctx.lineJoin = 'round';
-    // haloed in the background colour so the circles stay readable wherever
-    // they cross a grid line, without spending a second colour picker on them
-    for (const pass of [[cfg.pattern.bg, lw + 4], [cfg.pattern.fg, lw]]) {
+    for (const pass of [[halo, lw + 4], [ink, lw]]) {
       ctx.strokeStyle = pass[0];
       ctx.lineWidth = pass[1];
       for (const c of list) {
@@ -280,7 +291,7 @@
 
     panelmap: {
       name: 'Panel Map',
-      params: ['panelA', 'panelB', 'fg'],
+      params: ['panelA', 'panelB', 'fg', 'circles'],
       draw(ctx, cfg) {
         const { width: w, height: h } = cfg.wall;
         const g = wallGrid(cfg.wall);
@@ -298,6 +309,9 @@
         ctx.fillStyle = cfg.pattern.fg;
         for (const x of g.xs) ctx.fillRect(Math.min(x, w - 1), 0, 1, h);
         for (const y of g.ys) ctx.fillRect(0, Math.min(y, h - 1), w, 1);
+        // under the coordinates: naming panels is what this pattern is for, and
+        // a circle struck through "B1" costs more than a few gaps in the circle
+        drawDistortionCircles(ctx, cfg);
         // coordinates: letters across (A, B, C...), numbers down (1, 2, 3...)
         ctx.textAlign = 'center';
         for (let r = 0; r < g.rows; r++) {
@@ -1235,6 +1249,7 @@
   window.LED_FRAME_ANIMATED = frameAnimated;
   window.LED_WALL_GRID = wallGrid;
   window.LED_DISTORTION_CIRCLES = distortionCircles;
+  window.LED_CIRCLE_INK = circleInk;
   window.LED_COL_LETTER = colLetter;
   window.LED_WALL_SEGMENTS = wallSegments;
   window.LED_WALL_IS_SPLIT = wallIsSplit;
