@@ -264,3 +264,25 @@ label.wall-driven input[type="color"] { border-color: var(--accent); }
 #updateBar .msg { color: var(--text); max-width: 620px; }
 #updateBar.failed { border-color: var(--danger); }
 #updateBar.failed .msg { color: var(--danger); }
+
+/* several walls packed into one output */
+/* .dctl is a wrapping flex row — this forces the map onto a line of its own */
+.wallmap { flex: 0 0 100%; width: 100%; display: flex; flex-direction: column; gap: 7px; margin-top: 2px; }
+.wallmap .wmap {
+  width: 100%; border-radius: 6px; border: 1px solid var(--border);
+  background: #0b0b0c; cursor: grab; display: block;
+}
+.wallmap .wmap.dragging { cursor: grabbing; }
+.wmap-rows { display: flex; flex-direction: column; gap: 4px; }
+.wmap-row { display: flex; align-items: center; gap: 5px; }
+.wmap-row .wswatch { width: 10px; height: 10px; border-radius: 2px; flex: none; }
+.wmap-row select { flex: 1; min-width: 0; }
+.wmap-row input.pos { width: 58px; }
+.wmap-bar { display: flex; align-items: center; gap: 6px; }
+.wmap-fill { color: var(--muted); font-size: 11px; margin-left: auto; }
+.wmap-head { padding-bottom: 1px; }
+.wmap-head .cap { color: var(--muted); font-size: 10px; letter-spacing: .04em; text-transform: uppercase; }
+.wmap-head .cap.grow { flex: 1; }
+.wmap-head .cap.num { width: 58px; }
+.wmap-head .cap.end { width: 26px; }
+.wmap-warn { color: #f0803c; font-size: 11px; line-height: 1.35; }

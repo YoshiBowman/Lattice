@@ -104,7 +104,7 @@ function normalizeConfig(saved) {
     pattern: { ...DEFAULTS.pattern, ...saved.pattern },
     overlay: { ...DEFAULTS.overlay, ...saved.overlay },
     readout: { ...DEFAULTS.readout, ...saved.readout },
-    outputs: saved.outputs || {},
+    outputs: normalizeOutputs(saved.outputs, walls),
     virtualOutputs: saved.virtualOutputs || [],
   };
 }
@@ -592,9 +592,14 @@ function assignSegmentOutput(val, segment, seg) {
   }
 
   const oc = outCfgFor(id);
-  oc.wallId = w.id;
+  if (window.LED_OUTPUT_IS_MULTI(oc)) {
+    // this output already carries several walls — add to it, don't take it over
+    addWallToPackedOutput(oc, w, outputFrame(id, null, oc));
+  } else {
+    oc.wallId = w.id;
+    oc.segment = segment;
+  }
   oc.assigned = true;
-  oc.segment = segment;
   push();
   renderDisplays();
   syncSplitUI();
@@ -814,10 +819,333 @@ function startPreview() {
 
 // ---------- outputs ----------
 
+
+// Placements are pixel coordinates in a processor frame, so they must survive
+// a show file as numbers — and must not carry walls that no longer exist.
+function normalizeOutputs(saved, walls) {
+  const out = saved || {};
+  for (const k of Object.keys(out)) {
+    const oc = out[k];
+    if (!oc || !oc.multi) continue;
+    const seen = new Set();
+    oc.walls = (Array.isArray(oc.walls) ? oc.walls : [])
+      .filter((p) => p && walls.some((w) => w.id === p.wallId) && !seen.has(p.wallId) && seen.add(p.wallId) !== false)
+      .map((p) => ({ wallId: p.wallId, x: p.x | 0, y: p.y | 0 }));
+    if (!oc.walls.length) oc.multi = false;
+  }
+  return out;
+}
+
+// The processor frame an output represents, in pixels.
+function outputFrame(key, opts, oc) {
+  if (opts && opts.spec) return { w: opts.spec.width | 0, h: opts.spec.height | 0 };
+  const v = (cfg.virtualOutputs || []).find((x) => String(x.id) === String(key));
+  if (v) return { w: v.width | 0, h: v.height | 0 };
+  const d = displays.find((x) => String(x.id) === String(key));
+  if (d) return { w: d.pixelWidth | 0, h: d.pixelHeight | 0 };
+  // an SDI output's raster comes from its video mode, not from a window
+  const modes = (deckLinkInfo && deckLinkInfo.modes) || [];
+  const m = oc && oc.dlMode ? modes.find((x) => x.id === oc.dlMode) : null;
+  if (m) return { w: m.width | 0, h: m.height | 0 };
+  return { w: 1920, h: 1080 };
+}
+
+// Placing a wall on an output that already carries several: drop it in a gap
+// rather than replacing what is there.
+function addWallToPackedOutput(oc, wall, frame) {
+  const existing = oc.walls.find((p) => p.wallId === wall.id);
+  if (existing) return existing;
+  const spot = window.LED_FIRST_FREE_SPOT(
+    window.LED_PLACED_WALLS(oc, cfg.walls),
+    { w: wall.width | 0, h: wall.height | 0 }, frame.w, frame.h) || { x: 0, y: 0 };
+  const p = { wallId: wall.id, x: spot.x, y: spot.y };
+  oc.walls.push(p);
+  return p;
+}
+
+// A drag writes on every mouse move; coalesce so the output follows the drag
+// without a localStorage write and an IPC broadcast per pixel.
+let pushQueued = false;
+function pushSoon() {
+  if (pushQueued) return;
+  pushQueued = true;
+  requestAnimationFrame(() => { pushQueued = false; push(); });
+}
+
+// ---------- several walls out of one output ----------
+//
+// The editor is the frame itself: walls are drawn where the processor will
+// find them and dragged into place, because "STAGE LEFT at 1920,0" is a
+// sentence about a picture, and reading it off a picture is faster than
+// typing it into two number boxes. The boxes are still there for when a
+// drawing gives exact coordinates.
+function appendWallMap(ctl, key, oc, opts) {
+  const frame = outputFrame(key, opts, oc);
+  const box = document.createElement('div');
+  box.className = 'wallmap';
+
+  const cv = document.createElement('canvas');
+  cv.className = 'wmap';
+  // the drawing buffer is sized to the card once it is laid out; until then a
+  // sane default keeps the first paint from being a 300x150 default canvas
+  const MAPW = 420;
+  cv.width = MAPW;
+  cv.height = Math.max(60, Math.round((MAPW * frame.h) / Math.max(1, frame.w)));
+  const g = cv.getContext('2d');
+  let sc = MAPW / Math.max(1, frame.w);
+
+  // match the buffer to the rendered width so the map is crisp and the drag
+  // maths stays in one scale
+  function fitCanvas() {
+    const w = Math.round(cv.clientWidth || MAPW);
+    if (w < 40) return;
+    const h = Math.max(60, Math.round((w * frame.h) / Math.max(1, frame.w)));
+    if (cv.width !== w || cv.height !== h) { cv.width = w; cv.height = h; }
+    sc = w / Math.max(1, frame.w);
+  }
+
+  // Frame pixels per rendered pixel, taken from the element's box at the time
+  // of the event. Deriving it from the drawing buffer instead meant the scale
+  // could change under a drag already in progress, the first time the canvas
+  // was measured after being inserted into the card.
+  function scaleFrom(rect) {
+    return (rect.width || cv.width) / Math.max(1, frame.w);
+  }
+
+  const rows = document.createElement('div');
+  rows.className = 'wmap-rows';
+  const warn = document.createElement('div');
+  warn.className = 'wmap-warn';
+
+  const placed = () => window.LED_PLACED_WALLS(oc, cfg.walls);
+
+  function draw() {
+    fitCanvas();
+    const list = placed();
+    g.fillStyle = '#0b0b0c';
+    g.fillRect(0, 0, cv.width, cv.height);
+    g.strokeStyle = '#3a3a3d';
+    g.lineWidth = 1;
+    g.strokeRect(0.5, 0.5, cv.width - 1, cv.height - 1);
+    const issues = window.LED_PLACEMENT_ISSUES(list, frame.w, frame.h);
+    const bad = new Set([...issues.outside, ...issues.overlaps.flat()]);
+    list.forEach((p, i) => {
+      const x = p.x * sc, y = p.y * sc, w = p.w * sc, h = p.h * sc;
+      const col = cfg.wallColorMode === 'perWall' ? (p.wall.color || '#3fa9f5') : '#3fa9f5';
+      g.fillStyle = hexA(col, bad.has(i) ? 0.16 : 0.30);
+      g.fillRect(x, y, w, h);
+      g.strokeStyle = bad.has(i) ? '#f0803c' : col;
+      g.lineWidth = bad.has(i) ? 2 : 1;
+      g.strokeRect(x + 0.5, y + 0.5, Math.max(1, w - 1), Math.max(1, h - 1));
+      g.fillStyle = '#e8e8ea';
+      g.font = 'bold 10px -apple-system, system-ui, sans-serif';
+      g.save();
+      g.beginPath(); g.rect(x, y, w, h); g.clip();
+      g.fillText(p.wall.name, x + 4, y + 12);
+      g.fillStyle = '#9a9aa0';
+      g.font = '9px -apple-system, system-ui, sans-serif';
+      g.fillText(`${p.w}x${p.h}`, x + 4, y + 23);
+      g.restore();
+    });
+    // what a processor would actually do with this
+    const msgs = [];
+    if (issues.overlaps.length) {
+      msgs.push(issues.overlaps.map(([a, b]) => `${list[a].wall.name} overlaps ${list[b].wall.name}`).join('; '));
+    }
+    if (issues.outside.length) {
+      msgs.push(`${issues.outside.map((i) => list[i].wall.name).join(', ')} ${issues.outside.length > 1 ? 'fall' : 'falls'} outside the ${frame.w} x ${frame.h} frame`);
+    }
+    warn.textContent = msgs.join(' · ');
+    warn.style.display = msgs.length ? '' : 'none';
+    const used = list.reduce((a, p) => a + p.w * p.h, 0);
+    fill.textContent = list.length
+      ? `${list.length} wall${list.length > 1 ? 's' : ''} · ${Math.round((used / (frame.w * frame.h)) * 100)}% of the frame`
+      : 'No walls placed yet.';
+  }
+
+  // ---- drag to place ----
+  let drag = null;
+  cv.addEventListener('mousedown', (e) => {
+    const r = cv.getBoundingClientRect();
+    const s0 = scaleFrom(r);
+    const px = (e.clientX - r.left) / s0, py = (e.clientY - r.top) / s0;
+    const list = placed();
+    for (let i = list.length - 1; i >= 0; i--) {
+      const p = list[i];
+      if (px >= p.x && px <= p.x + p.w && py >= p.y && py <= p.y + p.h) {
+        drag = { i, dx: px - p.x, dy: py - p.y };
+        cv.classList.add('dragging');
+        break;
+      }
+    }
+  });
+  window.addEventListener('mousemove', (e) => {
+    if (!drag) return;
+    const r = cv.getBoundingClientRect();
+    const s0 = scaleFrom(r);
+    const list = placed();
+    const me2 = list[drag.i];
+    if (!me2) return;
+    let nx = Math.round((e.clientX - r.left) / s0 - drag.dx);
+    let ny = Math.round((e.clientY - r.top) / s0 - drag.dy);
+    // magnetic to the frame edges and to every other wall's edges: butting
+    // two feeds together is the common case and eyeballing it is not exact
+    const SNAP = Math.max(4, Math.round(8 / s0));
+    const xs = [0, frame.w - me2.w];
+    const ys = [0, frame.h - me2.h];
+    list.forEach((p, i) => {
+      if (i === drag.i) return;
+      xs.push(p.x, p.x + p.w, p.x + p.w, p.x - me2.w);
+      ys.push(p.y, p.y + p.h, p.y + p.h, p.y - me2.h);
+    });
+    for (const v of xs) if (Math.abs(nx - v) <= SNAP) { nx = v; break; }
+    for (const v of ys) if (Math.abs(ny - v) <= SNAP) { ny = v; break; }
+    nx = Math.max(0, Math.min(nx, Math.max(0, frame.w - me2.w)));
+    ny = Math.max(0, Math.min(ny, Math.max(0, frame.h - me2.h)));
+    oc.walls[drag.i].x = nx;
+    oc.walls[drag.i].y = ny;
+    const row = rows.children[drag.i + 1];   // +1 for the caption row
+    if (row) {
+      row.querySelector('[data-xy="x"]').value = nx;
+      row.querySelector('[data-xy="y"]').value = ny;
+    }
+    draw();
+    pushSoon();
+  });
+  window.addEventListener('mouseup', () => {
+    if (!drag) return;
+    drag = null;
+    cv.classList.remove('dragging');
+    push();
+  });
+
+  // ---- the list beside the map ----
+  function rebuildRows() {
+    rows.innerHTML = '';
+    if (oc.walls.length) {
+      const head = document.createElement('div');
+      head.className = 'wmap-row wmap-head';
+      head.innerHTML = '<span class="wswatch" style="visibility:hidden"></span>'
+        + '<span class="cap grow">Wall</span><span class="cap num">X</span>'
+        + '<span class="cap num">Y</span><span class="cap end"></span>';
+      rows.appendChild(head);
+    }
+    oc.walls.forEach((p, i) => {
+      const wall = cfg.walls.find((w) => w.id === p.wallId);
+      if (!wall) return;
+      const row = document.createElement('div');
+      row.className = 'wmap-row';
+
+      const dot = document.createElement('span');
+      dot.className = 'wswatch';
+      dot.style.background = cfg.wallColorMode === 'perWall' ? (wall.color || '#3fa9f5') : '#3fa9f5';
+
+      const sel = document.createElement('select');
+      cfg.walls.forEach((w) => {
+        const o = document.createElement('option');
+        o.value = w.id;
+        o.textContent = w.name;
+        sel.appendChild(o);
+      });
+      sel.value = p.wallId;
+      sel.addEventListener('change', () => {
+        p.wallId = sel.value;
+        rebuildRows();
+        draw();
+        push();
+      });
+
+      const mk = (which) => {
+        const inp = document.createElement('input');
+        inp.type = 'number';
+        inp.step = '1';
+        inp.className = 'pos';
+        inp.dataset.xy = which;
+        inp.title = which === 'x' ? 'Pixels from the left of the frame' : 'Pixels from the top of the frame';
+        inp.value = p[which] | 0;
+        inp.addEventListener('change', () => {
+          p[which] = inp.value | 0;
+          draw();
+          push();
+        });
+        return inp;
+      };
+
+      const rm = document.createElement('button');
+      rm.className = 'btn small remove';
+      rm.textContent = '✕';
+      rm.title = 'Remove from this output';
+      rm.addEventListener('click', () => {
+        oc.walls.splice(i, 1);
+        if (!oc.walls.length) { oc.multi = false; push(); renderDisplays(); return; }
+        rebuildRows();
+        draw();
+        push();
+      });
+
+      row.append(dot, sel, mk('x'), mk('y'), rm);
+      rows.appendChild(row);
+    });
+  }
+
+  const bar = document.createElement('div');
+  bar.className = 'wmap-bar';
+  const fill = document.createElement('span');
+  fill.className = 'wmap-fill';
+
+  const add = document.createElement('button');
+  add.className = 'btn small';
+  add.textContent = '+ Wall';
+  add.addEventListener('click', () => {
+    const taken = new Set(oc.walls.map((p) => p.wallId));
+    const next = cfg.walls.find((w) => !taken.has(w.id)) || cfg.walls[0];
+    const list = placed();
+    const size = { w: next.width | 0, h: next.height | 0 };
+    // slot it into a gap rather than repacking — moving walls the operator
+    // already positioned would be a surprise, and Auto-arrange is right there
+    const spot = window.LED_FIRST_FREE_SPOT(list, size, frame.w, frame.h) || { x: 0, y: 0 };
+    oc.walls.push({ wallId: next.id, x: spot.x, y: spot.y });
+    rebuildRows();
+    draw();
+    push();
+  });
+
+  const auto = document.createElement('button');
+  auto.className = 'btn small';
+  auto.textContent = 'Auto-arrange';
+  auto.title = 'Pack the walls into the frame, tallest first';
+  auto.addEventListener('click', () => {
+    const list = placed();
+    const { pos } = window.LED_AUTOPACK(list.map((p) => ({ w: p.w, h: p.h })), frame.w, frame.h, 0);
+    pos.forEach((q, i) => { oc.walls[i].x = q.x; oc.walls[i].y = q.y; });
+    rebuildRows();
+    draw();
+    push();
+  });
+
+  bar.append(add, auto, fill);
+  box.append(cv, rows, bar, warn);
+  ctl.appendChild(box);
+  rebuildRows();
+  draw();
+  // at build time the card is not in the document yet, so clientWidth is 0 and
+  // the buffer keeps its placeholder size — redraw once it has been measured
+  requestAnimationFrame(draw);
+  const onResize = () => { if (cv.isConnected) draw(); };
+  window.addEventListener('resize', onResize);
+}
+
+function hexA(hex, a) {
+  const n = parseInt(String(hex || '#3fa9f5').slice(1), 16);
+  return `rgba(${(n >> 16) & 255},${(n >> 8) & 255},${n & 255},${a})`;
+}
+
 function outCfgFor(id) {
   if (!cfg.outputs[id]) cfg.outputs[id] = { mode: 'fit', offsetX: 0, offsetY: 0, posX: 0, posY: 0, label: '', wallId: cfg.walls[0].id };
   return cfg.outputs[id];
 }
+
+const MULTI = '__multi__';
 
 function wallSelectFor(oc, key) {
   const sel = document.createElement('select');
@@ -827,9 +1155,27 @@ function wallSelectFor(oc, key) {
     opt.textContent = w.name;
     sel.appendChild(opt);
   }
-  sel.value = cfg.walls.some((w) => w.id === oc.wallId) ? oc.wallId : cfg.walls[0].id;
+  // one output can also carry several walls packed into its frame
+  const multiOpt = document.createElement('option');
+  multiOpt.value = MULTI;
+  multiOpt.textContent = '— several walls —';
+  sel.appendChild(multiOpt);
+
+  sel.value = oc.multi ? MULTI
+    : (cfg.walls.some((w) => w.id === oc.wallId) ? oc.wallId : cfg.walls[0].id);
   sel.title = 'Which wall this output displays';
   sel.addEventListener('change', () => {
+    if (sel.value === MULTI) {
+      // start from what the output already showed, so the switch is additive
+      const first = cfg.walls.find((w) => w.id === oc.wallId) || cfg.walls[0];
+      oc.multi = true;
+      oc.assigned = true;
+      if (!oc.walls || !oc.walls.length) oc.walls = [{ wallId: first.id, x: 0, y: 0 }];
+      push();
+      renderDisplays();
+      return;
+    }
+    oc.multi = false;
     oc.wallId = sel.value;
     oc.assigned = true;
     oc.segment = nextFreeSegment(oc.wallId, key);
@@ -955,6 +1301,15 @@ function appendOutputControls(ctl, key, oc, nameEl, opts) {
 
   ctl.appendChild(field('Wall', wallSelectFor(oc, key), 'Which wall this output displays'));
 
+  // Packed outputs place walls in processor pixels, so segment, scale mode and
+  // source crop have nothing to act on — the map replaces all three.
+  if (window.LED_OUTPUT_IS_MULTI(oc)) {
+    appendTypeSpecificControls(ctl, oc, opts);
+    appendPosFields(ctl, oc, key);
+    appendWallMap(ctl, key, oc, opts);
+    return;
+  }
+
   // When the assigned wall is carried by several outputs, this picks which
   // piece this one shows — and the crop follows from it, so nobody works out
   // pixel offsets by hand.
@@ -1006,9 +1361,13 @@ function appendOutputControls(ctl, key, oc, nameEl, opts) {
     }
   }
 
-  // where the image lands in the output frame — processors often capture a
-  // region that doesn't start at the frame's top-left. Arrow keys on the
-  // output window nudge these live (Shift = 10 px).
+  appendPosFields(ctl, oc, key);
+}
+
+// where the image lands in the output frame — processors often capture a
+// region that doesn't start at the frame's top-left. Arrow keys on the
+// output window nudge these live (Shift = 10 px).
+function appendPosFields(ctl, oc, key) {
   for (const key3 of ['posX', 'posY']) {
     const inp = document.createElement('input');
     inp.type = 'number'; inp.step = '1'; inp.value = oc[key3] | 0;

@@ -24,7 +24,21 @@ function myOutputCfg() {
     label: o.label || '',
     wallId: o.wallId,
     segment: o.segment | 0,
+    multi: !!o.multi,
+    walls: o.walls || [],
   };
+}
+
+// This output carries several walls packed into one frame
+function isMulti() {
+  return !!(cfg && window.LED_OUTPUT_IS_MULTI(myOutputCfg()));
+}
+
+// The processor frame this output represents: a virtual output's declared
+// resolution, or the physical display's pixels.
+function frameSize() {
+  if (me && me.virtual) return { w: me.vWidth, h: me.vHeight };
+  return { w: view.width, h: view.height };
 }
 
 // The rectangle of the wall this output shows. A segment defines it outright;
@@ -33,6 +47,8 @@ function myOutputCfg() {
 // while a segment was assigned gave the right scale but the wrong framing.
 function mySource() {
   const oc = myOutputCfg();
+  // the composite is already built at frame size — show all of it
+  if (isMulti()) return { x: 0, y: 0, w: wall.width, h: wall.height };
   const w = myWall();
   if (window.LED_WALL_IS_SPLIT(w)) {
     const seg = window.LED_WALL_SEGMENTS(w)[oc.segment | 0];
@@ -84,9 +100,10 @@ function sizeView() {
 }
 
 function ensureWall() {
+  const f = isMulti() ? frameSize() : null;
   const wc = myWall();
-  const w = Math.max(1, wc.width | 0);
-  const h = Math.max(1, wc.height | 0);
+  const w = Math.max(1, f ? f.w : wc.width | 0);
+  const h = Math.max(1, f ? f.h : wc.height | 0);
   if (wall.width !== w) wall.width = w;
   if (wall.height !== h) wall.height = h;
 }
@@ -103,7 +120,9 @@ function blit() {
   // renders straight to the window like a physical output — that way
   // fit/fill/stretch/1:1 visibly respond as you resize the window. Only
   // custom-resolution virtual outputs simulate the fixed processor frame.
-  const direct = !isVirtual || (me.vWidth === wall.width && me.vHeight === wall.height);
+  // a packed virtual output composites at its declared resolution and is then
+  // letterboxed into the window, so resizing never disturbs the placements
+  const direct = !isVirtual || (!isMulti() && me.vWidth === wall.width && me.vHeight === wall.height);
   let tctx, W, H;
   if (!direct) {
     if (virt.width !== me.vWidth) virt.width = me.vWidth;
@@ -130,7 +149,11 @@ function blitTo(vctx, W, H) {
   vctx.fillRect(0, 0, W, H);
   // posX/posY shift where the image lands in the output frame — LED processors
   // often capture a region that doesn't start at the frame's top-left corner
-  const { mode, posX, posY } = myOutputCfg();
+  const oc0 = myOutputCfg();
+  // packed walls are placed in processor pixels, so the composite goes down
+  // 1:1 — anything else would move the very placements this exists to match
+  const mode = isMulti() ? '1to1' : oc0.mode;
+  const posX = oc0.posX, posY = oc0.posY;
   const src = mySource();
   if (src.w <= 0 || src.h <= 0) return;
 
@@ -160,12 +183,49 @@ function blitTo(vctx, W, H) {
 
 const renderWallFrame = window.LED_CREATE_FRAME_RENDERER();
 
+// One renderer and one canvas per packed wall: the shared renderer caches its
+// static base per config identity, so they must not share an instance.
+const packed = new Map();
+function packedFor(id) {
+  let r = packed.get(id);
+  if (!r) {
+    const c = document.createElement('canvas');
+    r = { c, ctx: c.getContext('2d'), render: window.LED_CREATE_FRAME_RENDERER() };
+    packed.set(id, r);
+  }
+  return r;
+}
+
 // Rebuilt only when a config broadcast arrives — the renderer invalidates its
 // caches on object identity, and the animation loop must be allocation-free.
 let renderCfg = null;
+let multiCfg = null;
+let frame = null;
 
 function rebuildRenderCfg() {
   const oc = myOutputCfg();
+  if (isMulti()) {
+    const f = frameSize();
+    renderCfg = null;
+    multiCfg = window.LED_PLACED_WALLS(oc, cfg.walls || []).map((p) => ({
+      x: p.x, y: p.y, w: p.w, h: p.h, id: p.wall.id,
+      cfg: {
+        wall: p.wall,
+        pattern: window.LED_WALL_PATTERN(cfg.pattern, p.wall, cfg.wallColorMode),
+        overlay: cfg.overlay,
+        readout: cfg.readout,
+        // each packed wall names itself — one shared output label could not
+        centerLabel: p.wall.name,
+        cablingLayer: cfg.cablingLayer,
+      },
+    }));
+    // drop renderers for walls no longer placed here
+    const live = new Set(multiCfg.map((m) => m.id));
+    for (const id of [...packed.keys()]) if (!live.has(id)) packed.delete(id);
+    frame = f;
+    return;
+  }
+  multiCfg = null;
   const w = myWall();
   renderCfg = {
     wall: w,
@@ -180,7 +240,19 @@ function rebuildRenderCfg() {
 }
 
 function renderFrame(t) {
-  renderWallFrame(wctx, renderCfg, t);
+  if (multiCfg) {
+    wctx.fillStyle = '#000000';
+    wctx.fillRect(0, 0, wall.width, wall.height);
+    for (const m of multiCfg) {
+      const r = packedFor(m.id);
+      if (r.c.width !== m.w) r.c.width = m.w;
+      if (r.c.height !== m.h) r.c.height = m.h;
+      r.render(r.ctx, m.cfg, t);
+      wctx.drawImage(r.c, m.x, m.y);
+    }
+  } else {
+    renderWallFrame(wctx, renderCfg, t);
+  }
   blit();
 }
 

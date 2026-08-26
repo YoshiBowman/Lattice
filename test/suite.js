@@ -636,6 +636,129 @@ function check(name, ok, detail) {
   })()`));
   check('frames write to disk and clean up', wrote.ok, wrote.dir || wrote.error);
 
+  // ───────────────────────────────────────────── several walls per output
+  section('several walls per output');
+  // this section replaces the whole config, so hand back what it found
+  const cfgBefore = await evalIn(page, `JSON.stringify(cfg)`);
+  await evalIn(page, `(function(){
+    cfg=normalizeConfig(JSON.parse(JSON.stringify(DEFAULTS)));
+    cfg.walls[0].name='SL TORM'; addWall(); cfg.walls[1].name='HEADER'; addWall(); cfg.walls[2].name='SR TORM';
+    var dims=[[344,688],[1376,172],[344,688]];
+    cfg.walls.forEach(function(w,i){ w.mode='uniform'; w.defineBy='px'; w.panelW=172; w.panelH=172;
+      w.panelsX=dims[i][0]/172; w.panelsY=dims[i][1]/172; w.width=dims[i][0]; w.height=dims[i][1]; });
+    cfg.walls[0].color='#ff0000'; cfg.walls[1].color='#00ff00'; cfg.walls[2].color='#0000ff';
+    cfg.wallColorMode='perWall'; cfg.pattern.type='solid';
+    cfg.readout.label=false; cfg.readout.dims=false;
+    cfg.virtualOutputs=[{id:'vP',width:1920,height:1080}];
+    cfg.outputs={}; renderDisplays(); push(); return 1;})()`);
+
+  const enter = JSON.parse(await evalIn(page, `(function(){
+    var sel=[...document.querySelectorAll('#virtualList select')].find(function(s){
+      return [...s.options].some(function(o){return o.value==='__multi__';});});
+    sel.value='__multi__'; sel.dispatchEvent(new Event('change'));
+    var oc=cfg.outputs['vP'];
+    return JSON.stringify({multi:!!oc.multi, n:oc.walls.length, map:!!document.querySelector('.wmap')});})()`));
+  check('the Wall dropdown turns an output into a canvas',
+    enter.multi && enter.n === 1 && enter.map, JSON.stringify(enter));
+
+  const add3 = JSON.parse(await evalIn(page, `(function(){
+    var add=[...document.querySelectorAll('#virtualList .btn.small')]
+      .find(function(b){return b.textContent==='+ Wall';});
+    add.click(); add.click();
+    var oc=cfg.outputs['vP'], list=LED_PLACED_WALLS(oc,cfg.walls);
+    var iss=LED_PLACEMENT_ISSUES(list,1920,1080);
+    return JSON.stringify({n:oc.walls.length, overlaps:iss.overlaps.length, outside:iss.outside.length,
+      pos:list.map(function(p){return p.wall.name+'@'+p.x+','+p.y;})});})()`));
+  check('each added wall lands in a free gap, never on top of another',
+    add3.n === 3 && add3.overlaps === 0 && add3.outside === 0, add3.pos.join('  '));
+
+  const faults = JSON.parse(await evalIn(page, `(function(){
+    var oc=cfg.outputs['vP'];
+    oc.walls[1].x=oc.walls[0].x; oc.walls[1].y=oc.walls[0].y; renderDisplays();
+    var over=document.querySelector('.wmap-warn').textContent;
+    oc.walls[1].x=1900; oc.walls[1].y=0; renderDisplays();
+    var out=document.querySelector('.wmap-warn').textContent;
+    return JSON.stringify({over:over, out:out});})()`));
+  check('double-fed pixels are named, not silently accepted', /overlaps/.test(faults.over), faults.over);
+  check('a wall hanging off the frame is named', /outside the 1920 x 1080 frame/.test(faults.out), faults.out);
+
+  const repaired = JSON.parse(await evalIn(page, `(function(){
+    [...document.querySelectorAll('#virtualList .btn.small')]
+      .find(function(b){return b.textContent==='Auto-arrange';}).click();
+    var list=LED_PLACED_WALLS(cfg.outputs['vP'],cfg.walls);
+    var iss=LED_PLACEMENT_ISSUES(list,1920,1080);
+    return JSON.stringify({overlaps:iss.overlaps.length, outside:iss.outside.length});})()`));
+  check('Auto-arrange repairs a broken layout',
+    repaired.overlaps === 0 && repaired.outside === 0, JSON.stringify(repaired));
+
+  const dragSnap = JSON.parse(await evalIn(page, `(function(){
+    var oc=cfg.outputs['vP'];
+    oc.walls=[{wallId:cfg.walls[0].id,x:0,y:0},{wallId:cfg.walls[1].id,x:700,y:600},
+              {wallId:cfg.walls[2].id,x:1576,y:392}];
+    renderDisplays();
+    var cv=document.querySelector('.wmap'), r=cv.getBoundingClientRect(), sc=r.width/1920;
+    function at(px,py){return {clientX:r.left+px*sc, clientY:r.top+py*sc, bubbles:true};}
+    cv.dispatchEvent(new MouseEvent('mousedown', at(710,610)));
+    window.dispatchEvent(new MouseEvent('mousemove', at(360,610)));
+    window.dispatchEvent(new MouseEvent('mouseup', at(360,610)));
+    var snapped={x:oc.walls[1].x,y:oc.walls[1].y};
+    cv.dispatchEvent(new MouseEvent('mousedown', at(oc.walls[1].x+20,oc.walls[1].y+20)));
+    window.dispatchEvent(new MouseEvent('mousemove', at(3000,2000)));
+    window.dispatchEvent(new MouseEvent('mouseup', at(3000,2000)));
+    return JSON.stringify({snapped:snapped, clamped:{x:oc.walls[1].x,y:oc.walls[1].y}});})()`));
+  check('dragging snaps flush to a neighbour', dragSnap.snapped.x === 344,
+    `landed at x=${dragSnap.snapped.x}, neighbour ends at 344`);
+  check('a wall cannot be dragged out of the frame',
+    dragSnap.clamped.x === 1920 - 1376 && dragSnap.clamped.y === 1080 - 172, JSON.stringify(dragSnap.clamped));
+
+  // the placements have to mean something at the far end
+  await evalIn(page, `(function(){
+    cfg.outputs['vP'].walls=[{wallId:cfg.walls[0].id,x:0,y:0},
+      {wallId:cfg.walls[1].id,x:400,y:0},{wallId:cfg.walls[2].id,x:1576,y:392}];
+    push(); return 1;})()`);
+  await evalIn(page, `window.ledwall.startOutput('vP',{width:1920,height:1080,label:'PROC'})`);
+  await sleep(2600);
+  const outTab = (await targets()).find((t) => t.url.includes('output.html'));
+  let composited = { frame: 'none', n: 0 };
+  if (outTab) {
+    const outPage = await connect(outTab.webSocketDebuggerUrl);
+    await sleep(700);
+    composited = JSON.parse(await evalIn(outPage, `(function(){
+      var g=wall.getContext('2d');
+      function px(x,y){var d=g.getImageData(x,y,1,1).data; return [d[0],d[1],d[2]];}
+      function near(p,c){return Math.abs(p[0]-c[0])<40&&Math.abs(p[1]-c[1])<40&&Math.abs(p[2]-c[2])<40;}
+      return JSON.stringify({
+        frame: wall.width+'x'+wall.height, n: multiCfg ? multiCfg.length : 0,
+        sl: near(px(10,10),[255,0,0]),
+        slEdge: near(px(340,600),[255,0,0]) && near(px(350,600),[0,0,0]),
+        header: near(px(410,80),[0,255,0]),
+        headerEdge: near(px(410,165),[0,255,0]) && near(px(410,180),[0,0,0]),
+        sr: near(px(1590,400),[0,0,255]), empty: near(px(1200,900),[0,0,0]) });})()`));
+  }
+  check('the live output composites every wall at the full frame size',
+    composited.frame === '1920x1080' && composited.n === 3, `${composited.frame}, ${composited.n} walls`);
+  check('each wall lands on the exact pixel it was placed on',
+    composited.sl && composited.header && composited.sr, JSON.stringify(composited));
+  check('each keeps its own size, and unused frame stays black',
+    composited.slEdge && composited.headerEdge && composited.empty, JSON.stringify(composited));
+  await evalIn(page, `window.ledwall.stopOutput('vP')`);
+
+  const packSave = JSON.parse(await evalIn(page, `(function(){
+    var back=normalizeConfig(JSON.parse(JSON.stringify({latticeShow:1,cfg:cfg})).cfg);
+    var oc=back.outputs['vP'];
+    var gone=JSON.parse(JSON.stringify(cfg)); gone.walls=gone.walls.slice(0,2);
+    var pruned=normalizeConfig(gone);
+    var emptied=JSON.parse(JSON.stringify(cfg)); emptied.outputs['vP'].walls=[];
+    return JSON.stringify({n:oc.walls.length, first:oc.walls[0].x+','+oc.walls[0].y,
+      pruned:pruned.outputs['vP'].walls.length, emptyMulti:!!normalizeConfig(emptied).outputs['vP'].multi});})()`));
+  check('placements survive a show file', packSave.n === 3 && packSave.first === '0,0', JSON.stringify(packSave));
+  check('deleting a wall drops its placement, and an emptied output reverts to single-wall',
+    packSave.pruned === 2 && packSave.emptyMulti === false, JSON.stringify(packSave));
+
+  await evalIn(page, `(function(){
+    cfg = normalizeConfig(JSON.parse(${JSON.stringify(cfgBefore)}));
+    renderDisplays(); syncWallInputs(); syncPatternUI(); push(); return 1;})()`);
+
   // ───────────────────────────────────────────── persistence
   section('show files');
   const rt = JSON.parse(await evalIn(page, `(function(){

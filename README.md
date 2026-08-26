@@ -128,6 +128,20 @@ git tag v<version> && git push origin main --tags
   port, segment 2 to a display — and each output's crop follows from its segment, so nobody
   works out pixel offsets by hand. Optional overlap covers rigs whose feeds deliberately
   share pixels, and the preview draws the numbered feed boundaries.
+- **Several walls out of one output** — the other direction from splitting: a processor
+  feed often carries more than one wall, so set an output's **Wall** to "— several walls —"
+  and it becomes a canvas. Each wall is placed at 1:1 in processor pixels, because these
+  placements exist to match what the processor is told to capture. The frame itself is the
+  editor: walls are drawn where the processor will find them, **dragged into position** with
+  magnetic snapping to the frame edges and to each other (butting two feeds together is the
+  common case and eyeballing it is not exact), with X/Y boxes alongside for when a drawing
+  gives exact coordinates. **Auto-arrange** packs them tallest-first, **+ Wall** drops the
+  next one into a free gap without moving what you have already placed, and the two faults
+  that matter are called out by name — walls that overlap (pixels fed twice) and walls that
+  fall outside the frame (pixels the processor will never capture). Each packed wall renders
+  its own name, so they are told apart on the wall itself, and a footer reports how much of
+  the frame is in use. Sending a wall to an output that is already packed adds it rather
+  than taking the output over.
 - **Output position** — Pos X/Y on every output shifts where the image lands in the frame
   (LED processors often capture a region that doesn't start at the frame's top-left).
   Works in every scale mode; in 1:1, Crop X/Y picks the wall region and Pos X/Y places it.

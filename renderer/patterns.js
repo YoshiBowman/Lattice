@@ -192,6 +192,85 @@
     }
   }
 
+  // ── Several walls out of one output ────────────────────────────────────
+  // A processor feed often carries more than one wall: a pair of torms, a
+  // header and two set pieces, all packed into one 1920x1080 canvas. The
+  // output becomes a canvas and each wall is placed on it at 1:1 — scaling
+  // would defeat the point, since these placements exist to match what the
+  // processor is told to capture.
+  function outputIsMulti(oc) {
+    return !!(oc && oc.multi && oc.walls && oc.walls.length);
+  }
+
+  // Resolve stored placements against the current wall list, dropping any
+  // whose wall has since been deleted.
+  function placedWalls(oc, walls) {
+    if (!outputIsMulti(oc)) return [];
+    const out = [];
+    for (const p of oc.walls) {
+      const wall = walls.find((w) => w.id === p.wallId);
+      if (!wall) continue;
+      out.push({ wall, x: p.x | 0, y: p.y | 0, w: wall.width | 0, h: wall.height | 0 });
+    }
+    return out;
+  }
+
+  // Shelf packing, tallest first: the layout a person would do by hand, and
+  // it leaves whole strips free rather than scattering gaps.
+  function autoPack(sizes, frameW, frameH, gap) {
+    gap = gap | 0;
+    const order = sizes.map((_, i) => i)
+      .sort((a, b) => (sizes[b].h - sizes[a].h) || (sizes[b].w - sizes[a].w));
+    const pos = new Array(sizes.length);
+    let x = 0, y = 0, shelfH = 0, fits = true;
+    for (const i of order) {
+      const s = sizes[i];
+      if (x > 0 && x + s.w > frameW) { x = 0; y += shelfH + gap; shelfH = 0; }
+      if (x + s.w > frameW || y + s.h > frameH) fits = false;
+      pos[i] = { x, y };
+      x += s.w + gap;
+      shelfH = Math.max(shelfH, s.h);
+    }
+    return { pos, fits };
+  }
+
+  // Where to drop ONE more wall without disturbing what is already placed.
+  // Candidate corners are the frame origin and the far edges of everything
+  // present — the spots a person would try — taken topmost-then-leftmost.
+  function firstFreeSpot(placed, size, frameW, frameH) {
+    const xs = [0], ys = [0];
+    for (const p of placed) { xs.push(p.x + p.w); ys.push(p.y + p.h); }
+    const cand = [];
+    for (const y of ys) for (const x of xs) cand.push({ x, y });
+    cand.sort((a, b) => (a.y - b.y) || (a.x - b.x));
+    for (const c of cand) {
+      if (c.x + size.w > frameW || c.y + size.h > frameH) continue;
+      const clash = placed.some((p) => c.x < p.x + p.w && p.x < c.x + size.w
+        && c.y < p.y + p.h && p.y < c.y + size.h);
+      if (!clash) return c;
+    }
+    return null;   // caller decides: the frame is full
+  }
+
+  // Two faults worth flagging: pixels fed twice, and pixels the processor
+  // will never capture because they fall outside the frame.
+  function placementIssues(placed, frameW, frameH) {
+    const overlaps = [];
+    for (let i = 0; i < placed.length; i++) {
+      for (let j = i + 1; j < placed.length; j++) {
+        const a = placed[i], b = placed[j];
+        if (a.x < b.x + b.w && b.x < a.x + a.w && a.y < b.y + b.h && b.y < a.y + a.h) {
+          overlaps.push([i, j]);
+        }
+      }
+    }
+    const outside = [];
+    placed.forEach((p, i) => {
+      if (p.x < 0 || p.y < 0 || p.x + p.w > frameW || p.y + p.h > frameH) outside.push(i);
+    });
+    return { overlaps, outside };
+  }
+
   const PATTERNS = {
     solid: {
       name: 'Solid Color',
@@ -1226,6 +1305,11 @@
   window.LED_RENDER_FRAME = renderFrame;
   window.LED_FRAME_ANIMATED = frameAnimated;
   window.LED_WALL_GRID = wallGrid;
+  window.LED_OUTPUT_IS_MULTI = outputIsMulti;
+  window.LED_PLACED_WALLS = placedWalls;
+  window.LED_AUTOPACK = autoPack;
+  window.LED_FIRST_FREE_SPOT = firstFreeSpot;
+  window.LED_PLACEMENT_ISSUES = placementIssues;
   window.LED_DISTORTION_CIRCLES = distortionCircles;
   window.LED_COL_LETTER = colLetter;
   window.LED_WALL_SEGMENTS = wallSegments;
