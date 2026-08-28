@@ -636,6 +636,38 @@ function check(name, ok, detail) {
   })()`));
   check('frames write to disk and clean up', wrote.ok, wrote.dir || wrote.error);
 
+  // H.264 with 4:2:0 chroma cannot encode an odd width or height, which is
+  // reachable from real panel maths (a 263px panel, an odd panel count) and
+  // used to fail the export with ffmpeg's last four lines — "Conversion
+  // failed!" — never the reason.
+  const enc = JSON.parse(await evalIn(page, `(async function(){
+    async function run(W,H,tag){
+      var begun=await window.ledwall.exportBegin('/private/tmp/lattice-suite-export/enc-'+tag);
+      var wall={id:'m',name:'M',width:W,height:H,mode:'uniform',defineBy:'px',
+        panelW:W,panelH:H,panelsX:1,panelsY:1};
+      var c=document.createElement('canvas'); c.width=W; c.height=H;
+      var render=LED_CREATE_FRAME_RENDERER();
+      for(var i=0;i<3;i++){
+        render(c.getContext('2d'),{wall:wall,
+          pattern:{...cfg.pattern,type:'grid',fg:'#ffffff',bg:'#000000',size:16},
+          overlay:{type:'none'},readout:{label:false,dims:false},centerLabel:''}, i*40);
+        await window.ledwall.exportFrame(begun.dir, i, c.toDataURL('image/png'));
+      }
+      var r=await window.ledwall.exportEncode(begun.dir, begun.dir+'/out.mp4', 30);
+      await window.ledwall.exportCleanup(begun.dir, false);
+      return {ok:r.ok, padded:r.padded||null, error:r.error||null};
+    }
+    return JSON.stringify({even: await run(1376,688,'even'),
+      oddW: await run(1375,687,'oddw'), oddH: await run(1376,687,'oddh')});})()`));
+  check('an even wall encodes with no padding',
+    enc.even.ok === true && enc.even.padded === null, enc.even.error || 'clean');
+  check('an odd wall encodes instead of failing',
+    enc.oddW.ok === true && enc.oddH.ok === true, enc.oddW.error || enc.oddH.error || 'both encoded');
+  check('and the padding it applied is reported, not silent',
+    enc.oddW.padded && enc.oddW.padded.from === '1375x687' && enc.oddW.padded.to === '1376x688'
+    && enc.oddH.padded && enc.oddH.padded.to === '1376x688',
+    `${JSON.stringify(enc.oddW.padded)} / ${JSON.stringify(enc.oddH.padded)}`);
+
   // ───────────────────────────────────────────── several walls per output
   section('several walls per output');
   // this section replaces the whole config, so hand back what it found

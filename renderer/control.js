@@ -2406,9 +2406,17 @@ function updateLoopInfo() {
     }
     note.style.color = 'var(--danger)';
   } else if (fmt === 'mp4') {
+    // H.264 4:2:0 cannot encode an odd width or height. Say so before the
+    // export rather than after, since it changes the clip's size.
+    const w = curWall();
+    const odd = (w.width % 2) || (w.height % 2);
     note.textContent = `H.264 at CRF 16 — high enough that single-pixel grid lines survive encoding. `
-      + `Using ${exportCaps.ffmpegPath || 'ffmpeg'}.`;
-    note.style.color = '';
+      + (odd
+        ? `${w.width} × ${w.height} is an odd size and H.264 needs even dimensions, so the clip will be `
+          + `padded to ${w.width + (w.width % 2)} × ${w.height + (w.height % 2)} with black at the right/bottom — `
+          + `align it top-left on the media server rather than scaling it, or export a PNG sequence for an exact match.`
+        : `Using ${exportCaps.ffmpegPath || 'ffmpeg'}.`);
+    note.style.color = odd ? '#f0803c' : '';
   } else if (fmt === 'png') {
     note.textContent = 'A numbered PNG sequence in its own folder — lossless, and what Hippotizer, '
       + 'Resolume and disguise take natively.';
@@ -2485,7 +2493,8 @@ async function runLoopExport() {
         const enc = await window.ledwall.exportEncode(begun.dir, out, p.fps);
         if (!enc.ok) throw new Error(enc.error);
         await window.ledwall.exportCleanup(begun.dir, false);
-        progress.textContent = `Saved ${out.split('/').pop()} — ${p.frames} frames, ${(p.ms / 1000).toFixed(2)} s`;
+        progress.textContent = `Saved ${out.split('/').pop()} — ${p.frames} frames, ${(p.ms / 1000).toFixed(2)} s`
+          + (enc.padded ? ` · padded ${enc.padded.from} → ${enc.padded.to} for H.264; align top-left, do not scale` : '');
         window.ledwall.exportReveal(out);
       } else {
         progress.textContent = `Saved ${p.frames} PNGs to ${begun.dir.split('/').pop()}`;

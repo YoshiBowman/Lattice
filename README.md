@@ -159,7 +159,11 @@ git tag v<version> && git push origin main --tags
   frames, so the frame after the last *is* the first. Formats:
   **PNG image sequence** — lossless and what Hippotizer, Resolume and disguise ingest
   natively; **MP4 (H.264, CRF 16)** when ffmpeg is installed, high enough quality that
-  single-pixel grid lines survive; **WebM (VP9)** for VLC or a quick check.
+  single-pixel grid lines survive — H.264 cannot encode an odd width or height, so a wall
+  with an odd pixel count is padded to the next even size with black at the right and
+  bottom (the dialog warns before you export and the result says what it did: align the
+  clip top-left on the media server rather than scaling it, or use a PNG sequence for an
+  exact match); **WebM (VP9)** for VLC or a quick check.
   Motion Test and Pixel Walk never return to their exact start, and the dialog says so
   rather than exporting a clip that jumps.
 - **Live preview** — the control window previews exactly what outputs render (same code).

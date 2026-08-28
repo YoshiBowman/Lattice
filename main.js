@@ -618,22 +618,57 @@ ipcMain.handle('export-write-file', (e, filePath, dataUrl) => {
   }
 });
 
+// Width and height straight out of the PNG header (IHDR is always first).
+function pngSize(file) {
+  try {
+    const fd = fs.openSync(file, 'r');
+    const buf = Buffer.alloc(24);
+    const n = fs.readSync(fd, buf, 0, 24, 0);
+    fs.closeSync(fd);
+    if (n < 24 || buf.toString('ascii', 1, 4) !== 'PNG') return null;
+    return { w: buf.readUInt32BE(16), h: buf.readUInt32BE(20) };
+  } catch (_) { return null; }
+}
+
+// ffmpeg puts the cause near the top and the consequences at the bottom, so
+// the last few lines are always "Conversion failed!" and never the reason.
+function ffmpegReason(err) {
+  const lines = err.split('\n').map((l) => l.trim()).filter(Boolean);
+  const hit = lines.find((l) => /not divisible by 2|Error while opening encoder|Unknown encoder|No such file|Permission denied|Invalid data|not supported/i.test(l));
+  return (hit || lines.slice(-2).join(' ')).replace(/^\[[^\]]*\]\s*/, '');
+}
+
 ipcMain.handle('export-encode', (e, dir, outPath, fps) => new Promise((resolve) => {
   const bin = findFfmpeg().path;
   if (!bin) return resolve({ ok: false, error: 'ffmpeg not found' });
+
+  // H.264 with 4:2:0 chroma cannot encode an odd width or height — a wall of
+  // 263px panels hits this the moment its pixel count comes out odd. Pad to
+  // the next even size rather than failing, and tell the caller, because the
+  // clip is then one pixel wider than the wall and must not be scaled to fit.
+  const first = pngSize(path.join(dir, 'frame_00000.png')) || pngSize(path.join(dir, 'frame_00001.png'));
+  let padded = null;
+  const vf = [];
+  if (first && (first.w % 2 || first.h % 2)) {
+    const w2 = first.w + (first.w % 2), h2 = first.h + (first.h % 2);
+    vf.push(`pad=${w2}:${h2}:0:0:black`);
+    padded = { from: `${first.w}x${first.h}`, to: `${w2}x${h2}` };
+  }
+
   // -crf 16 keeps test patterns clean: 1px lines are exactly what compression
   // destroys first, and a soft grid defeats the purpose of the clip.
   const args = [
     '-y', '-framerate', String(fps), '-i', path.join(dir, 'frame_%05d.png'),
+    ...(vf.length ? ['-vf', vf.join(',')] : []),
     '-c:v', 'libx264', '-preset', 'slow', '-crf', '16',
     '-pix_fmt', 'yuv420p', '-movflags', '+faststart', outPath,
   ];
   const proc = spawn(bin, args, { stdio: ['ignore', 'ignore', 'pipe'] });
   let err = '';
-  proc.stderr.on('data', (d) => { err += d.toString().slice(-2000); });
+  proc.stderr.on('data', (d) => { err = (err + d.toString()).slice(-8000); });
   proc.on('close', (code) => {
-    if (code === 0) resolve({ ok: true, path: outPath });
-    else resolve({ ok: false, error: `ffmpeg exited ${code}: ${err.split('\n').slice(-4).join(' ')}` });
+    if (code === 0) resolve({ ok: true, path: outPath, padded });
+    else resolve({ ok: false, error: `ffmpeg exited ${code}: ${ffmpegReason(err)}` });
   });
   proc.on('error', (e2) => resolve({ ok: false, error: e2.message }));
 }));
